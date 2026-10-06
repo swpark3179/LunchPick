@@ -259,7 +259,7 @@ export default function SettingsScreen() {
     <div style={{ flex: 1, minWidth: 0, overflow: 'auto', position: 'relative' }}>
       <div
         style={{
-          maxWidth: 760,
+          maxWidth: 800,
           padding: '22px 28px 40px',
           display: 'flex',
           flexDirection: 'column',
@@ -269,8 +269,8 @@ export default function SettingsScreen() {
         <div>
           <div style={{ fontSize: 22, fontWeight: 750, letterSpacing: '-0.02em' }}>설정</div>
           <div style={{ fontSize: 13, color: MUTED, marginTop: 4 }}>
-            동료와 같이 고를 공유 서버를 열고, AI 추천에 쓸 FabriX 키를 등록하고, 식당 목록을
-            파일로 주고받을 수 있어요.
+            동료와 같이 고를 서버를 켜거나, 동료의 방에 접속할 수 있어요. AI 키와 식당 목록 파일도 여기서
+            관리해요.
           </div>
         </div>
 
@@ -283,7 +283,8 @@ export default function SettingsScreen() {
             <div style={{ fontSize: 15, fontWeight: 750 }}>AI 추천 (FabriX)</div>
             <div style={{ fontSize: 12.5, color: MUTED, marginTop: 3, lineHeight: 1.5 }}>
               FabriX 포털에서 &lsquo;LLM Serving APIs&rsquo; 를 신청하면 받는 값이에요. 키는 Windows
-              자격 증명 관리자에 저장되고, 호출은 앱 내부에서만 이뤄집니다.
+              자격 증명 관리자에 저장되고, 호출은 앱 내부에서만 이뤄집니다. 같이 고르기의 AI 정렬은 호스트
+              PC의 이 설정으로 처리돼요. 접속한 동료에게 키는 전달되지 않아요.
             </div>
           </div>
 

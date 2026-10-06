@@ -1,39 +1,28 @@
 /**
- * 식당 세부정보 — 내 화면에서만 열린다 (공유하지 않음).
- * 잘못된 정보는 여기서 고칠 수 있고, 저장하면 호스트의 식당 목록에 반영돼 모두에게 보인다.
+ * 식당 상세 (시안: 식당 상세 (나만 보기)) — 내 화면에서만 열린다.
+ * 틀린 정보는 여기서 고치고, 저장하면 호스트의 식당 목록에 반영돼 모두에게 알려진다.
  */
 import { useEffect, useRef, useState } from 'react';
 
 import { copyText } from '../../lib/ipc';
-import type { Menu, Restaurant } from '../../lib/types';
-import { fmtPhone, priceFmt, uid, won } from '../../lib/util';
-import { LIMITS } from '../../share/protocol';
-import { useShowPrices } from '../../store/settingsStore';
+import type { Restaurant } from '../../lib/types';
+import { fmtPhone, uid } from '../../lib/util';
+import { LIMITS, type RoomState } from '../../share/protocol';
 import { useShare } from '../../store/shareStore';
 import { toast } from '../../store/uiStore';
-import { AINK, CATS, DANGER, HAIRLINE, INK, MUTED, MUTED_2, STAR, catBg, catDot, catFg } from '../../theme';
-import { IconCopy, IconEdit, IconPhone, IconTrash, IconX, INPUT_BORDER, btn } from './parts';
+import { AC, AINK, CH, INK } from '../../theme';
+import { IconEyeOff, IconPhone, IconX, INPUT_BORDER } from './parts';
 
 type MenuDraft = { id: string; name: string; price: string; fav: boolean };
-type Draft = { category: string; phone: string; memo: string; menus: MenuDraft[] };
+type Draft = { phone: string; memo: string; menus: MenuDraft[] };
 
-const toDraft = (r: Restaurant): Draft => ({
-  category: r.category,
-  phone: r.phone,
-  memo: r.memo,
-  menus: r.menus.map((m) => ({
-    id: m.id,
-    name: m.name,
-    price: m.price ? priceFmt(String(m.price)) : '',
-    fav: m.fav,
-  })),
-});
+const won = (p: number | null) => (p == null ? '가격 미정' : `${p.toLocaleString('ko-KR')}원`);
 
 const field: React.CSSProperties = {
   height: 34,
   border: `1px solid ${INPUT_BORDER}`,
   borderRadius: 7,
-  padding: '0 10px',
+  padding: '0 9px',
   font: 'inherit',
   fontSize: 13.5,
   outline: 'none',
@@ -41,66 +30,81 @@ const field: React.CSSProperties = {
   background: 'white',
   minWidth: 0,
 };
+const label: React.CSSProperties = { fontSize: 12.5, fontWeight: 700, color: 'oklch(0.38 0.012 60)' };
 
 export default function InfoDrawer({
-  rest: live,
-  disliked,
+  room,
+  id,
+  host,
+  hostShort,
   onClose,
 }: {
-  rest: Restaurant | null;
-  disliked: boolean;
+  room: RoomState;
+  id: string | null;
+  host: boolean;
+  hostShort: string;
   onClose: () => void;
 }) {
-  // 닫히는 동안 내용이 사라지지 않도록 마지막 식당을 붙잡아 둔다.
-  const lastRef = useRef<Restaurant | null>(null);
-  if (live) lastRef.current = live;
-  const rest = live ?? lastRef.current;
   const act = useShare((s) => s.act);
-  const role = useShare((s) => s.role);
-  const showPrices = useShowPrices();
-  const [edit, setEdit] = useState<Draft | null>(null);
-  const [err, setErr] = useState('');
+  const [draft, setDraft] = useState<Draft | null>(null);
 
-  // 다른 식당을 열면 편집을 닫는다.
-  useEffect(() => {
-    setEdit(null);
-    setErr('');
-  }, [live?.id]);
-
+  // 닫히는 동안 내용이 사라지지 않도록 마지막 식당을 붙잡아 둔다 (시안의 dLast).
+  const lastRef = useRef<Restaurant | null>(null);
+  const live = id ? (room.restaurants.find((r) => r.id === id) ?? null) : null;
+  if (live) lastRef.current = live;
+  const r = live ?? lastRef.current;
   const open = !!live;
 
-  const save = () => {
-    if (!rest || !edit) return;
-    const digits = edit.phone.replace(/\D/g, '');
-    if (digits && digits.length < 9) {
-      setErr('전화번호를 정확히 입력해 주세요.');
-      return;
-    }
-    const menus: Menu[] = edit.menus
-      .map((m) => ({
+  useEffect(() => setDraft(null), [id]);
+
+  if (!r) return null;
+  const hue = CH[r.category] ?? 300;
+  const status =
+    room.final?.restId === r.id
+      ? ['확정됨', 'oklch(0.95 0.04 150)', 'oklch(0.4 0.1 150)']
+      : room.dislikes[r.id]?.length
+        ? ['가기 싫은 곳', 'oklch(0.95 0.03 25)', 'oklch(0.48 0.15 25)']
+        : room.cands[r.id]
+          ? ['후보', 'oklch(0.965 0.025 50)', AINK]
+          : null;
+  const excluded = !!room.dislikes[r.id]?.length;
+
+  const startEdit = () =>
+    setDraft({
+      phone: r.phone,
+      memo: r.memo,
+      menus: r.menus.map((m) => ({
         id: m.id,
-        name: m.name.trim(),
-        price: m.price.replace(/\D/g, '') ? Number(m.price.replace(/\D/g, '')) : null,
+        name: m.name,
+        price: m.price == null ? '' : String(m.price),
         fav: m.fav,
-      }))
-      .filter((m) => m.name);
+      })),
+    });
+
+  const save = () => {
+    if (!draft) return;
+    const menus = draft.menus
+      .filter((m) => m.name.trim())
+      .map((m) => {
+        const n = parseInt(m.price.replace(/[^\d]/g, ''), 10);
+        return { id: m.id, name: m.name.trim(), price: Number.isNaN(n) ? null : n, fav: m.fav };
+      });
+    const changed =
+      fmtPhone(draft.phone) !== r.phone ||
+      draft.memo.trim() !== r.memo ||
+      JSON.stringify(menus.map((m) => [m.name, m.price])) !==
+        JSON.stringify(r.menus.map((m) => [m.name, m.price]));
+    setDraft(null);
+    if (!changed) return;
     act({
       type: 'editRest',
-      rest: {
-        id: rest.id,
-        category: edit.category,
-        phone: fmtPhone(edit.phone),
-        memo: edit.memo.trim(),
-        menus,
-      },
+      rest: { id: r.id, phone: fmtPhone(draft.phone), memo: draft.memo.trim(), menus },
     });
-    setEdit(null);
-    setErr('');
-    toast(role === 'host' ? '식당 정보를 고쳤어요' : '고친 내용을 호스트에게 보냈어요');
+    toast(host ? '내 식당 목록에 저장하고 모두에게 알렸어요' : '호스트의 식당 목록에 반영했어요');
   };
 
   const setMenu = (i: number, p: Partial<MenuDraft>) =>
-    setEdit((d) => (d ? { ...d, menus: d.menus.map((m, j) => (j === i ? { ...m, ...p } : m)) } : d));
+    setDraft((d) => (d ? { ...d, menus: d.menus.map((m, j) => (j === i ? { ...m, ...p } : m)) } : d));
 
   return (
     <>
@@ -109,336 +113,482 @@ export default function InfoDrawer({
         style={{
           position: 'absolute',
           inset: 0,
-          zIndex: 6,
-          background: 'oklch(0.25 0.012 60 / .16)',
+          background: 'oklch(0.25 0.012 60 / .2)',
           opacity: open ? 1 : 0,
           pointerEvents: open ? 'auto' : 'none',
-          transition: 'opacity .25s',
+          transition: 'opacity .3s',
+          zIndex: 20,
         }}
       />
       <div
         role="dialog"
-        aria-label="식당 정보"
+        aria-label={`${r.name} 정보`}
         style={{
           position: 'absolute',
           top: 0,
           right: 0,
           bottom: 0,
-          width: 380,
+          width: 400,
           maxWidth: '100%',
-          zIndex: 7,
           background: 'white',
-          borderLeft: `1px solid ${HAIRLINE}`,
-          boxShadow: '-14px 0 36px oklch(0.4 0.02 60 / .12)',
+          boxShadow: '-20px 0 50px oklch(0.2 0.02 60 / .18)',
           transform: open ? 'translateX(0)' : 'translateX(105%)',
-          transition: 'transform .32s cubic-bezier(.2,.8,.2,1)',
+          transition: 'transform .42s cubic-bezier(.2,.8,.2,1)',
+          zIndex: 21,
           display: 'flex',
           flexDirection: 'column',
         }}
       >
-        {rest ? (
-          <>
-            <div
-              style={{
-                padding: '16px 18px 14px',
-                borderBottom: `1px solid ${HAIRLINE}`,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 10,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    height: 24,
-                    padding: '0 10px',
-                    borderRadius: 12,
-                    fontSize: 12,
-                    fontWeight: 650,
-                    background: catBg(rest.category),
-                    color: catFg(rest.category),
-                  }}
-                >
-                  <span
-                    style={{ width: 7, height: 7, borderRadius: '50%', background: catDot(rest.category) }}
-                  />
-                  {rest.category}
-                </span>
-                {disliked ? (
-                  <span style={{ fontSize: 12, color: DANGER, fontWeight: 650 }}>가기 싫은 곳으로 빠짐</span>
-                ) : null}
-                <span style={{ flex: 1 }} />
-                <span style={{ fontSize: 11.5, color: MUTED_2 }}>나만 보는 화면</span>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={onClose}
-                  title="닫기"
-                  style={{ ...btn('ghost', 28), width: 28, padding: 0 }}
-                >
-                  <IconX size={15} />
-                </button>
-              </div>
-              <div style={{ fontSize: 22, fontWeight: 780, letterSpacing: '-0.02em' }}>{rest.name}</div>
-            </div>
+        <div
+          style={{
+            flex: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '12px 14px 12px 18px',
+            borderBottom: '1px solid oklch(0.93 0.005 75)',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              height: 26,
+              padding: '0 10px',
+              borderRadius: 13,
+              background: 'oklch(0.955 0.005 75)',
+              color: 'oklch(0.42 0.012 60)',
+              fontSize: 12,
+              fontWeight: 700,
+            }}
+          >
+            <IconEyeOff size={13} />
+            나만 보는 중
+          </div>
+          <span style={{ fontSize: 11.5, color: 'oklch(0.55 0.012 60)', flex: 1 }}>
+            다른 사람 화면엔 열리지 않아요
+          </span>
+          <div
+            role="button"
+            tabIndex={0}
+            className="tg-act"
+            onClick={onClose}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') onClose();
+            }}
+            style={{
+              width: 30,
+              height: 30,
+              borderRadius: 7,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              color: 'oklch(0.42 0.012 60)',
+            }}
+          >
+            <IconX size={15} stroke={2.2} />
+          </div>
+        </div>
 
-            {!edit ? (
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflow: 'auto',
+            padding: 20,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 18,
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 22, fontWeight: 780, letterSpacing: '-0.02em' }}>{r.name}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <Chip bg={`oklch(0.95 0.035 ${hue})`} fg={`oklch(0.42 0.11 ${hue})`}>
+                {r.category}
+              </Chip>
+              {status ? (
+                <Chip bg={status[1]} fg={status[2]}>
+                  {status[0]}
+                </Chip>
+              ) : null}
+              {room.edited[r.id] ? (
+                <Chip key={room.edited[r.id]} bg="oklch(0.95 0.04 150)" fg="oklch(0.4 0.1 150)" pop>
+                  방금 수정됨
+                </Chip>
+              ) : null}
+            </div>
+          </div>
+
+          {!draft ? (
+            <div
+              key="view"
+              style={{ display: 'flex', flexDirection: 'column', gap: 18, animation: 'lp-in .25s ease-out' }}
+            >
               <div
-                key="view"
-                className="lp-fade-up"
                 style={{
-                  flex: 1,
-                  minHeight: 0,
-                  overflow: 'auto',
-                  padding: '14px 18px 18px',
                   display: 'flex',
-                  flexDirection: 'column',
-                  gap: 14,
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '14px 16px',
+                  borderRadius: 10,
+                  background: 'oklch(0.975 0.004 75)',
                 }}
               >
                 <div
                   style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: '50%',
+                    background: 'white',
+                    boxShadow: '0 0 0 1px oklch(0.91 0.006 75)',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 10,
-                    background: 'oklch(0.975 0.004 75)',
-                    borderRadius: 9,
-                    padding: '10px 12px',
+                    justifyContent: 'center',
+                    color: AC,
+                    flex: 'none',
                   }}
                 >
-                  <IconPhone size={16} color={MUTED} />
-                  <span
-                    style={{ flex: 1, fontSize: 17, fontWeight: 650, fontVariantNumeric: 'tabular-nums' }}
+                  <IconPhone size={16} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11.5, color: 'oklch(0.55 0.012 60)' }}>전화번호</div>
+                  <div
+                    key={r.phone}
+                    style={{
+                      fontSize: 19,
+                      fontWeight: 750,
+                      fontVariantNumeric: 'tabular-nums',
+                      letterSpacing: '-0.01em',
+                      animation: 'lp-in .3s ease-out',
+                    }}
                   >
-                    {rest.phone || (
-                      <span style={{ color: MUTED_2, fontSize: 13.5, fontWeight: 500 }}>번호 없음</span>
-                    )}
-                  </span>
-                  {rest.phone ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void copyText(rest.phone);
-                        toast(`${rest.phone} 복사됨`);
-                      }}
-                      style={btn('ink', 28)}
-                    >
-                      <IconCopy size={13} />
-                      복사
-                    </button>
-                  ) : null}
-                </div>
-                {rest.memo ? (
-                  <div style={{ fontSize: 13, color: 'oklch(0.42 0.012 60)', lineHeight: 1.55 }}>
-                    {rest.memo}
+                    {r.phone || '번호 없음'}
                   </div>
-                ) : null}
-
-                <div>
-                  <div style={{ fontSize: 12.5, fontWeight: 700, color: MUTED, marginBottom: 6 }}>
-                    메뉴 {rest.menus.length}개
-                  </div>
-                  {rest.menus.length ? (
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      {rest.menus.map((m, i) => (
-                        <div
-                          key={m.id}
-                          className="lp-fade-up"
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                            height: 38,
-                            borderBottom: '1px solid oklch(0.95 0.004 75)',
-                            animationDelay: `${i * 30}ms`,
-                          }}
-                        >
-                          <span style={{ color: m.fav ? STAR : 'transparent', fontSize: 12 }}>★</span>
-                          <span style={{ flex: 1, fontSize: 14 }}>{m.name}</span>
-                          {showPrices ? (
-                            <span style={{ fontSize: 13, color: MUTED, fontVariantNumeric: 'tabular-nums' }}>
-                              {won(m.price) || '—'}
-                            </span>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: 13, color: MUTED_2 }}>등록된 메뉴가 없어요.</div>
-                  )}
-                </div>
-
-                <div style={{ flex: 1 }} />
-                <div style={{ fontSize: 12, color: MUTED_2, lineHeight: 1.5 }}>
-                  정보가 틀렸나요? 고치면 호스트의 식당 목록에 저장되고 모두의 화면에 바로 반영돼요.
                 </div>
                 <button
                   type="button"
-                  className="btn-soft"
-                  onClick={() => setEdit(toDraft(rest))}
-                  style={{ ...btn('soft'), alignSelf: 'flex-start' }}
+                  className="tg-soft"
+                  onClick={() => {
+                    void copyText(r.phone);
+                    toast('전화번호를 복사했어요');
+                  }}
+                  style={{
+                    height: 32,
+                    padding: '0 12px',
+                    border: `1px solid ${INPUT_BORDER}`,
+                    borderRadius: 7,
+                    background: 'white',
+                    font: 'inherit',
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
                 >
-                  <IconEdit size={14} />
-                  정보 고치기
+                  복사
                 </button>
               </div>
-            ) : (
-              <div
-                key="edit"
-                className="lp-fade-up"
-                style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
-              >
-                <div
-                  style={{
-                    flex: 1,
-                    minHeight: 0,
-                    overflow: 'auto',
-                    padding: '14px 18px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 12,
-                  }}
-                >
-                  <label style={labelStyle}>
-                    분류
-                    <select
-                      value={edit.category}
-                      onChange={(e) => setEdit({ ...edit, category: e.target.value })}
-                      style={{ ...field, cursor: 'pointer' }}
-                    >
-                      {CATS.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label style={labelStyle}>
-                    전화번호
-                    <input
-                      className="inp"
-                      value={edit.phone}
-                      onChange={(e) => {
-                        setErr('');
-                        setEdit({ ...edit, phone: fmtPhone(e.target.value) });
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{ ...label, marginBottom: 6 }}>메뉴 {r.menus.length}개</div>
+                {r.menus.length ? (
+                  r.menus.map((m) => (
+                    <div
+                      key={m.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '9px 0',
+                        borderBottom: '1px solid oklch(0.94 0.005 75)',
                       }}
-                      placeholder="02-555-1234"
-                      style={{ ...field, fontVariantNumeric: 'tabular-nums' }}
-                    />
-                  </label>
-                  <label style={labelStyle}>
-                    메모
+                    >
+                      <span style={{ flex: 1, fontSize: 13.5 }}>{m.name}</span>
+                      <span
+                        style={{
+                          fontSize: 13,
+                          color: 'oklch(0.42 0.012 60)',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {won(m.price)}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ fontSize: 12.5, color: 'oklch(0.55 0.012 60)', padding: '12px 0' }}>
+                    등록된 메뉴가 없어요. ‘정보 수정’에서 추가해 주세요.
+                  </div>
+                )}
+              </div>
+              {r.memo ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={label}>메모</div>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      lineHeight: 1.55,
+                      padding: '10px 12px',
+                      borderRadius: 8,
+                      background: 'oklch(0.965 0.025 50)',
+                      color: 'oklch(0.38 0.06 50)',
+                    }}
+                  >
+                    {r.memo}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div
+              key="edit"
+              style={{ display: 'flex', flexDirection: 'column', gap: 16, animation: 'lp-in .25s ease-out' }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={label}>전화번호</span>
+                <input
+                  className="tg-input"
+                  value={draft.phone}
+                  onChange={(e) => setDraft({ ...draft, phone: fmtPhone(e.target.value) })}
+                  style={{
+                    ...field,
+                    height: 38,
+                    padding: '0 10px',
+                    fontSize: 14,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={label}>메뉴</span>
+                {draft.menus.map((m, i) => (
+                  <div
+                    key={m.id}
+                    style={{
+                      display: 'flex',
+                      gap: 6,
+                      alignItems: 'center',
+                      animation: 'lp-in .25s ease-out',
+                    }}
+                  >
                     <input
-                      className="inp"
-                      value={edit.memo}
-                      maxLength={LIMITS.memo}
-                      onChange={(e) => setEdit({ ...edit, memo: e.target.value })}
-                      placeholder="예: 11시 20분 전에 전화하면 자리 맡아줌"
-                      style={field}
+                      className="tg-input"
+                      value={m.name}
+                      maxLength={LIMITS.menuName}
+                      onChange={(e) => setMenu(i, { name: e.target.value })}
+                      placeholder="메뉴 이름"
+                      style={{ ...field, flex: 1 }}
                     />
-                  </label>
-                  <div style={labelStyle}>
-                    메뉴
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {edit.menus.map((m, i) => (
-                        <div
-                          key={m.id}
-                          className="lp-fade-up"
-                          style={{ display: 'flex', gap: 6, alignItems: 'center' }}
-                        >
-                          <input
-                            className="inp"
-                            value={m.name}
-                            maxLength={LIMITS.menuName}
-                            onChange={(e) => setMenu(i, { name: e.target.value })}
-                            placeholder="메뉴 이름"
-                            style={{ ...field, flex: 1 }}
-                          />
-                          <input
-                            className="inp"
-                            value={m.price}
-                            inputMode="numeric"
-                            onChange={(e) => setMenu(i, { price: priceFmt(e.target.value) })}
-                            placeholder="가격"
-                            style={{
-                              ...field,
-                              width: 92,
-                              textAlign: 'right',
-                              fontVariantNumeric: 'tabular-nums',
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="btn-ghost-danger"
-                            title="메뉴 삭제"
-                            onClick={() => setEdit({ ...edit, menus: edit.menus.filter((_, j) => j !== i) })}
-                            style={{ ...btn('ghost', 30), width: 30, padding: 0, color: DANGER }}
-                          >
-                            <IconTrash size={14} />
-                          </button>
-                        </div>
-                      ))}
-                      {edit.menus.length < LIMITS.menus ? (
-                        <button
-                          type="button"
-                          className="btn-soft"
-                          onClick={() =>
-                            setEdit({
-                              ...edit,
-                              menus: [...edit.menus, { id: uid(), name: '', price: '', fav: false }],
-                            })
-                          }
-                          style={{ ...btn('soft', 30), alignSelf: 'flex-start', color: AINK }}
-                        >
-                          + 메뉴 추가
-                        </button>
-                      ) : null}
+                    <input
+                      className="tg-input"
+                      value={m.price}
+                      inputMode="numeric"
+                      onChange={(e) =>
+                        setMenu(i, { price: e.target.value.replace(/[^\d]/g, '').slice(0, 7) })
+                      }
+                      placeholder="가격"
+                      style={{ ...field, width: 84, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+                    />
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      title="삭제"
+                      className="tg-danger"
+                      onClick={() => setDraft({ ...draft, menus: draft.menus.filter((_, j) => j !== i) })}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter')
+                          setDraft({ ...draft, menus: draft.menus.filter((_, j) => j !== i) });
+                      }}
+                      style={{
+                        width: 30,
+                        height: 30,
+                        borderRadius: 7,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        color: 'oklch(0.5 0.17 25)',
+                        flex: 'none',
+                      }}
+                    >
+                      <IconX size={13} />
                     </div>
                   </div>
-                  {err ? (
-                    <div className="lp-shake" style={{ fontSize: 12.5, color: DANGER }}>
-                      {err}
-                    </div>
-                  ) : null}
-                </div>
-                <div
-                  style={{
-                    padding: '12px 18px 16px',
-                    borderTop: `1px solid ${HAIRLINE}`,
-                    display: 'flex',
-                    gap: 8,
-                    justifyContent: 'flex-end',
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="btn-soft"
-                    onClick={() => setEdit(null)}
-                    style={btn('soft')}
+                ))}
+                {draft.menus.length < LIMITS.menus ? (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    className="tg-dashed"
+                    onClick={() =>
+                      setDraft({
+                        ...draft,
+                        menus: [...draft.menus, { id: uid(), name: '', price: '', fav: false }],
+                      })
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter')
+                        setDraft({
+                          ...draft,
+                          menus: [...draft.menus, { id: uid(), name: '', price: '', fav: false }],
+                        });
+                    }}
+                    style={{
+                      height: 34,
+                      border: '1.5px dashed oklch(0.86 0.01 60)',
+                      borderRadius: 7,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: 'oklch(0.45 0.012 60)',
+                      cursor: 'pointer',
+                    }}
                   >
-                    취소
-                  </button>
-                  <button type="button" className="btn-accent" onClick={save} style={btn('accent')}>
-                    저장하고 모두에게 반영
-                  </button>
-                </div>
+                    + 메뉴 추가
+                  </div>
+                ) : null}
               </div>
-            )}
-          </>
-        ) : null}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={label}>메모</span>
+                <textarea
+                  className="tg-input"
+                  value={draft.memo}
+                  maxLength={LIMITS.memo}
+                  onChange={(e) => setDraft({ ...draft, memo: e.target.value })}
+                  rows={3}
+                  style={{
+                    border: `1px solid ${INPUT_BORDER}`,
+                    borderRadius: 7,
+                    padding: '9px 10px',
+                    font: 'inherit',
+                    fontSize: 13.5,
+                    outline: 'none',
+                    resize: 'vertical',
+                    lineHeight: 1.5,
+                    color: INK,
+                  }}
+                />
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'oklch(0.5 0.012 60)',
+                  lineHeight: 1.5,
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  background: 'oklch(0.975 0.004 75)',
+                }}
+              >
+                {host
+                  ? '저장하면 내 식당 목록이 바뀌고, 방에 있는 모두에게 알려요.'
+                  : `저장하면 ${hostShort}님(호스트)의 식당 목록에 반영되고, 모두에게 알려요.`}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div
+          style={{
+            flex: 'none',
+            display: 'flex',
+            gap: 8,
+            padding: '12px 18px 16px',
+            borderTop: '1px solid oklch(0.93 0.005 75)',
+          }}
+        >
+          {!draft ? (
+            <>
+              <button type="button" className="tg-soft" onClick={startEdit} style={footBtn(false)}>
+                정보 수정
+              </button>
+              <button
+                type="button"
+                className={excluded ? '' : 'tg-accent'}
+                onClick={() => {
+                  if (excluded) {
+                    toast('가기 싫은 곳으로 빠진 식당이에요');
+                    return;
+                  }
+                  act({ type: 'final', restId: r.id });
+                  onClose();
+                }}
+                style={{ ...footBtn(true), opacity: excluded ? 0.4 : 1 }}
+              >
+                이 식당으로 최종 확정
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="tg-soft" onClick={() => setDraft(null)} style={footBtn(false)}>
+                취소
+              </button>
+              <button type="button" className="tg-accent" onClick={save} style={footBtn(true)}>
+                저장하고 모두에게 반영
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </>
   );
 }
 
-const labelStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 6,
-  fontSize: 12.5,
-  fontWeight: 650,
-  color: 'oklch(0.4 0.012 60)',
-};
+const footBtn = (accent: boolean): React.CSSProperties =>
+  accent
+    ? {
+        flex: 1,
+        height: 40,
+        border: 'none',
+        borderRadius: 8,
+        background: AC,
+        color: 'white',
+        font: 'inherit',
+        fontSize: 13.5,
+        fontWeight: 700,
+        cursor: 'pointer',
+      }
+    : {
+        height: 40,
+        padding: '0 16px',
+        border: `1px solid ${INPUT_BORDER}`,
+        borderRadius: 8,
+        background: 'white',
+        font: 'inherit',
+        fontSize: 13.5,
+        fontWeight: 650,
+        cursor: 'pointer',
+      };
+
+function Chip({
+  bg,
+  fg,
+  pop,
+  children,
+}: {
+  bg: string;
+  fg: string;
+  pop?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      style={{
+        height: 24,
+        padding: '0 9px',
+        borderRadius: 12,
+        background: bg,
+        color: fg,
+        fontSize: 12,
+        fontWeight: 700,
+        display: 'flex',
+        alignItems: 'center',
+        animation: pop ? 'lp-pop .4s ease-out both' : undefined,
+      }}
+    >
+      {children}
+    </span>
+  );
+}

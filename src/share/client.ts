@@ -4,7 +4,7 @@
  * 접속하면 인사(hello)를 보내고 호스트의 welcome 을 기다린다. 그 뒤로는 호스트가 보내는
  * 방 상태를 그대로 화면에 반영할 뿐이다. 연결이 끊기면 같은 id 로 몇 번 다시 붙어 본다.
  */
-import { type Action, type C2H, type H2C, PROTOCOL, type RoomState } from './protocol';
+import { type Action, type C2H, type FocusMap, type H2C, PROTOCOL, type RoomState } from './protocol';
 import { clientTransport } from './transport';
 
 const WELCOME_TIMEOUT_MS = 5000;
@@ -16,6 +16,9 @@ export type ClientStatus = 'connecting' | 'connected' | 'reconnecting';
 
 export type ClientCallbacks = {
   onState: (s: RoomState, you: string) => void;
+  onFocus: (f: FocusMap) => void;
+  /** 소켓이 열렸다 (첫 접속에서만 — 연결 단계 표시에 쓴다) */
+  onSocket?: () => void;
   onStatus: (s: ClientStatus) => void;
   onError: (msg: string) => void;
   /** 더 이상 이어갈 수 없게 끝났을 때 (호스트가 닫음, 내보냄, 재접속 실패) */
@@ -80,9 +83,12 @@ export function joinRoom(
           clearTimeout(welcomeTimer);
           you = m.you;
           cb.onState(m.state, you);
+          cb.onFocus(m.focus ?? {});
           resolve();
         } else if (m.t === 'state') {
           if (welcomed) cb.onState(m.state, you);
+        } else if (m.t === 'focus') {
+          if (welcomed) cb.onFocus(m.focus ?? {});
         } else if (m.t === 'err') {
           cb.onError(m.msg);
         } else if (m.t === 'bye') {
@@ -112,6 +118,7 @@ export function joinRoom(
             reject(new Error('취소했어요.'));
             return;
           }
+          if (!resume) cb.onSocket?.();
           const p = profile();
           wire({
             t: 'hello',

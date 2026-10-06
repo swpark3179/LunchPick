@@ -1,22 +1,14 @@
 /**
- * 호스트가 정한 연출(무작위 뽑기·사다리)을 각자 화면에서 같은 시간표로 재생한다.
- * 이미 끝난 연출을 늦게 받은 경우(나중에 들어온 사람)에는 재생하지 않는다.
+ * 호스트가 정한 무작위 뽑기를 각자 화면에서 같은 시간표(anim.ts)로 재생한다.
+ * 이미 끝난 뽑기를 늦게 받은 경우(나중에 들어온 사람)에는 재생하지 않는다.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import { ladderTimeline, rollTimeline } from '../../share/anim';
-import type { LadderRun, Roll } from '../../share/protocol';
+import { rollTimeline } from '../../share/anim';
+import type { Roll } from '../../share/protocol';
 
-export type RollView = {
-  id: string;
-  by: string;
-  count: number;
-  flash: string | null;
-  landed: string[];
-  active: boolean;
-};
-
-const LANDED_HOLD_MS = 1600;
+/** cursor: 스포트라이트가 지금 머무는 카드, landed: 당첨이 확정된 카드들 */
+export type RollView = { id: string; by: string; count: number; cursor: string | null; landed: string[] };
 
 export function useRollAnim(roll: Roll | null): RollView | null {
   const [view, setView] = useState<RollView | null>(null);
@@ -28,8 +20,7 @@ export function useRollAnim(roll: Roll | null): RollView | null {
     if (roll.done) return;
     const { frames, total } = rollTimeline(roll);
     const ids: ReturnType<typeof setTimeout>[] = [];
-    const base = { id: roll.id, by: roll.by, count: roll.count };
-    setView({ ...base, flash: null, landed: [], active: true });
+    setView({ id: roll.id, by: roll.by, count: roll.count, cursor: roll.seq[0]?.[0] ?? null, landed: [] });
     frames.forEach((f) => {
       ids.push(
         setTimeout(() => {
@@ -37,7 +28,7 @@ export function useRollAnim(roll: Roll | null): RollView | null {
             v && v.id === roll.id
               ? {
                   ...v,
-                  flash: f.id,
+                  cursor: f.id,
                   landed: f.land && !v.landed.includes(f.id) ? [...v.landed, f.id] : v.landed,
                 }
               : v,
@@ -45,13 +36,7 @@ export function useRollAnim(roll: Roll | null): RollView | null {
         }, f.at),
       );
     });
-    ids.push(
-      setTimeout(
-        () => setView((v) => (v && v.id === roll.id ? { ...v, flash: null, active: false } : v)),
-        total,
-      ),
-    );
-    ids.push(setTimeout(() => setView((v) => (v && v.id === roll.id ? null : v)), total + LANDED_HOLD_MS));
+    ids.push(setTimeout(() => setView((v) => (v && v.id === roll.id ? null : v)), total));
     return () => {
       ids.forEach(clearTimeout);
       // StrictMode 의 이펙트 재실행에서도 다시 재생되도록 표시를 지운다.
@@ -62,53 +47,4 @@ export function useRollAnim(roll: Roll | null): RollView | null {
   }, [roll?.id]);
 
   return view;
-}
-
-export type LadderView = {
-  run: LadderRun;
-  drawn: Record<number, boolean>;
-  revealed: Record<number, boolean>;
-  finished: boolean;
-};
-
-export function useLadderAnim(run: LadderRun | null): [LadderView | null, () => void] {
-  const [view, setView] = useState<LadderView | null>(null);
-  const seen = useRef(new Set<string>());
-
-  // 결과(done)가 오면 run 을 최신으로 바꿔 둔다.
-  useEffect(() => {
-    if (run) setView((v) => (v && v.run.id === run.id ? { ...v, run } : v));
-  }, [run]);
-
-  useEffect(() => {
-    if (!run || seen.current.has(run.id)) return;
-    seen.current.add(run.id);
-    if (run.done) return;
-    const tl = ladderTimeline(run);
-    setView({ run, drawn: {}, revealed: {}, finished: false });
-    const ids: ReturnType<typeof setTimeout>[] = [];
-    run.cands.forEach((_, i) => {
-      ids.push(
-        setTimeout(
-          () => setView((v) => (v ? { ...v, drawn: { ...v.drawn, [i]: true } } : v)),
-          tl.start(i) + 60,
-        ),
-      );
-      ids.push(
-        setTimeout(
-          () => setView((v) => (v ? { ...v, revealed: { ...v.revealed, [i]: true } } : v)),
-          tl.start(i) + tl.path + 60,
-        ),
-      );
-    });
-    ids.push(setTimeout(() => setView((v) => (v ? { ...v, finished: true } : v)), tl.total));
-    return () => {
-      ids.forEach(clearTimeout);
-      seen.current.delete(run.id);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run?.id]);
-
-  const close = useCallback(() => setView(null), []);
-  return [view, close];
 }

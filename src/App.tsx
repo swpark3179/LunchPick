@@ -9,12 +9,13 @@ import { windowShow } from './lib/ipc';
 import ListScreen from './screens/ListScreen';
 import PickScreen from './screens/PickScreen';
 import SettingsScreen from './screens/SettingsScreen';
-import TogetherPanel from './screens/together/TogetherPanel';
+import EndedDialog from './screens/together/EndedDialog';
+import TogetherScreen from './screens/together/TogetherScreen';
 import { useData } from './store/dataStore';
 import { useList } from './store/listStore';
 import { clearTimers, usePick } from './store/pickStore';
 import { useSettings } from './store/settingsStore';
-import { bootShare, useShare } from './store/shareStore';
+import { bootShare } from './store/shareStore';
 import { toastError, useUi } from './store/uiStore';
 import { APP_BG, MUTED } from './theme';
 
@@ -22,7 +23,6 @@ export default function App() {
   const view = useUi((s) => s.view);
   const ready = useData((s) => s.ready);
   const modalOpen = useList((s) => s.modal !== null);
-  const panelOpen = useShare((s) => s.panelOpen);
   const booted = useRef(false);
 
   useEffect(() => {
@@ -115,22 +115,15 @@ export default function App() {
             <ListScreen />
           ) : view === 'pick' ? (
             <PickScreen />
+          ) : view === 'together' ? (
+            <TogetherScreen />
           ) : (
             <SettingsScreen />
           )}
         </ErrorBoundary>
       </div>
-      {/* 같이 고르기 패널이 깨져도 연결은 살아 있다 — 접고 알린다. */}
-      <ErrorBoundary
-        resetKey={panelOpen}
-        fallback={() => null}
-        onError={(e) => {
-          useShare.getState().closePanel();
-          toastError(e, '같이 고르기 화면 오류');
-        }}
-      >
-        <TogetherPanel />
-      </ErrorBoundary>
+      {/* 같이 고르기가 끝나면(호스트 종료·내보냄·연결 끊김) 어느 화면에서든 한 번 알린다. */}
+      <EndedDialog />
       {/* 모달이 깨지면 닫고 알린다 — 목록 화면은 그대로 쓸 수 있다. */}
       <ErrorBoundary
         resetKey={modalOpen}

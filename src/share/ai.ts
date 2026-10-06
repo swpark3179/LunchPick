@@ -136,7 +136,8 @@ type Concept = {
 };
 
 const SPICY = /마라|짬뽕|떡볶이|라볶이|김치|제육|닭갈비|육개장|똠얌|쫄면|매운|불닭|커리|카레/;
-const SOUP = /탕|찌개|국밥|순대국|국수|칼국수|라멘|쌀국수|우동|짬뽕|똠얌|마라탕|육개장|만두국|수제비/;
+// '탕수육' 은 국물이 아니다.
+const SOUP = /탕(?!수)|찌개|국밥|순대국|국수|칼국수|라멘|쌀국수|우동|짬뽕|똠얌|마라탕|육개장|만두국|수제비/;
 
 // 앞쪽이 먼저 검사된다. '안 매운' 이 '매운' 보다 앞에 있어야 한다.
 const CONCEPTS: Concept[] = [
@@ -260,20 +261,26 @@ const avgPrice = (r: Restaurant) => {
 };
 
 /**
- * 누적된 개념들로 점수를 매겨 정렬한다. 같은 점수는 이전 순서를 유지한다 (안정 정렬).
+ * 누적된 요청(turns — 요청마다 개념 목록)으로 점수를 매겨 정렬한다. 나중 요청일수록 조금 더
+ * 무겁게 친다 (1, 1.3, 1.6 …). 같은 점수는 이전 순서를 유지한다 (안정 정렬).
  * 돌려주는 why 는 점수가 오른 앞쪽 3곳에만 붙인다.
  */
 export function fallbackRank(
   rs: Restaurant[],
   history: readonly HistoryEntry[],
-  concepts: string[],
+  turns: string[][],
 ): { ids: string[]; why: Record<string, string> } {
-  const defs = concepts.map((k) => CONCEPTS.find((c) => c.key === k)).filter((c): c is Concept => !!c);
+  const weighted = turns.flatMap((keys, t) =>
+    keys
+      .map((k) => CONCEPTS.find((c) => c.key === k))
+      .filter((c): c is Concept => !!c)
+      .map((c) => ({ c, w: 1 + t * 0.3 })),
+  );
   const scored = rs.map((r, i) => {
     const text = restText(r);
     let score = 0;
     const hits: string[] = [];
-    for (const c of defs) {
+    for (const { c, w } of weighted) {
       let s = 0;
       if (c.hit && c.hit.test(text)) s += 2 * (c.weight ?? 1);
       if (c.cat && r.category === c.cat) s += 3;
@@ -285,8 +292,8 @@ export function fallbackRank(
         const p = avgPrice(r);
         if (p !== null) s += p <= 9000 ? 2 : p >= 14000 ? -1 : 0;
       }
-      if (s > 0) hits.push(c.key);
-      score += s;
+      if (s > 0 && !hits.includes(c.key)) hits.push(c.key);
+      score += s * w;
     }
     return { r, i, score, hits };
   });
@@ -297,3 +304,65 @@ export function fallbackRank(
   });
   return { ids: scored.map((x) => x.r.id), why };
 }
+
+// ---------------------------------------------------------------- 카드 태그
+
+/** 카드 아래에 보이는 태그. AI 정렬 요청과 겹치면 강조한다. */
+export const TAGS = ['국물', '매운', '가벼운', '빠른', '든든', '면', '밥', '저렴'] as const;
+export type Tag = (typeof TAGS)[number];
+
+export const TAG_LABEL: Record<Tag, string> = {
+  국물: '#국물',
+  매운: '#매운맛',
+  가벼운: '#가볍게',
+  빠른: '#빨리',
+  든든: '#든든하게',
+  면: '#면',
+  밥: '#밥',
+  저렴: '#가성비',
+};
+
+const TAG_HIT: Record<Exclude<Tag, '저렴'>, RegExp> = {
+  국물: SOUP,
+  매운: SPICY,
+  가벼운: /샐러드|포케|김밥|쌀국수|초밥|우동|반미|샌드|죽|딤섬|하가우/,
+  빠른: /김밥|덮밥|버거|국밥|떡볶이|반미|포케|짜장|볶음밥|분식/,
+  든든: /갈비|고기|제육|카츠|돈까스|버거|닭갈비|덮밥|국밥|수육|탕수육|텐동|순대/,
+  면: /면|국수|라멘|파스타|짜장|짬뽕|쌀국수|우동|칼국수|쫄면|팟타이|볶이/,
+  밥: /밥|덮밥|비빔|리조또|카레|커리|텐동|초밥|포케/,
+};
+
+/** 식당의 메뉴·분류로 태그를 최대 3개 붙인다. */
+export function restTags(r: Restaurant): Tag[] {
+  const text = restText(r);
+  const out: Tag[] = [];
+  for (const t of TAGS) {
+    if (out.length >= 3) break;
+    if (t === '저렴') {
+      const p = avgPrice(r);
+      if (p !== null && p <= 9000) out.push(t);
+    } else if (TAG_HIT[t].test(text)) out.push(t);
+  }
+  return out;
+}
+
+/** 요청의 개념을 카드 태그로 옮긴다 ('비 오는 날' → 국물 처럼). */
+const TAG_OF_CONCEPT: Record<string, Tag> = {
+  국물: '국물',
+  해장: '국물',
+  '추운 날': '국물',
+  '비 오는 날': '국물',
+  매운: '매운',
+  가볍게: '가벼운',
+  '더운 날': '가벼운',
+  빨리: '빠른',
+  든든하게: '든든',
+  고기: '든든',
+  면: '면',
+  밥: '밥',
+  가성비: '저렴',
+};
+
+export const tagsOfConcepts = (concepts: string[]): Tag[] => [
+  ...new Set(concepts.map((c) => TAG_OF_CONCEPT[c]).filter((t): t is Tag => !!t)),
+];
