@@ -346,8 +346,8 @@ fn extract_json_array(text: &str) -> Option<&str> {
     }
 }
 
-#[tauri::command]
-pub async fn fabrix_recommend(conf: FabrixConf, prompt: String) -> Result<Vec<AiPick>, String> {
+/// chat/completions 를 한 번 호출하고 첫 번째 답변 본문을 돌려준다.
+async fn complete(conf: &FabrixConf, messages: Vec<ChatMessage<'_>>) -> Result<String, String> {
     let creds = load_creds()?;
     let model_id = conf.model_id.trim().to_string();
     if model_id.is_empty() {
@@ -355,16 +355,7 @@ pub async fn fabrix_recommend(conf: FabrixConf, prompt: String) -> Result<Vec<Ai
     }
     let body = ChatRequest {
         model: BODY_MODEL_PLACEHOLDER,
-        messages: vec![
-            ChatMessage {
-                role: "system",
-                content: SYSTEM_PROMPT,
-            },
-            ChatMessage {
-                role: "user",
-                content: &prompt,
-            },
-        ],
+        messages,
         max_tokens: MAX_TOKENS,
     };
 
@@ -392,11 +383,29 @@ pub async fn fabrix_recommend(conf: FabrixConf, prompt: String) -> Result<Vec<Ai
     if choice.finish_reason.as_deref() == Some("length") {
         return Err("AI 응답이 길이 제한에 걸렸어요.".into());
     }
-    let content = choice
+    choice
         .message
         .and_then(|m| m.content)
         .filter(|c| !c.trim().is_empty())
-        .ok_or("AI 가 빈 응답을 보냈어요.")?;
+        .ok_or_else(|| "AI 가 빈 응답을 보냈어요.".to_string())
+}
+
+#[tauri::command]
+pub async fn fabrix_recommend(conf: FabrixConf, prompt: String) -> Result<Vec<AiPick>, String> {
+    let content = complete(
+        &conf,
+        vec![
+            ChatMessage {
+                role: "system",
+                content: SYSTEM_PROMPT,
+            },
+            ChatMessage {
+                role: "user",
+                content: &prompt,
+            },
+        ],
+    )
+    .await?;
 
     let arr = extract_json_array(&content).ok_or("AI 응답에서 JSON 배열을 찾지 못했어요.")?;
     let raw: Vec<RawPick> =
@@ -423,4 +432,42 @@ pub async fn fabrix_recommend(conf: FabrixConf, prompt: String) -> Result<Vec<Ai
         return Err("AI 가 고른 후보가 없어요.".into());
     }
     Ok(picks)
+}
+
+// ---------------------------------------------------------------- 같이 고르기 (멀티턴)
+
+#[derive(Debug, Deserialize)]
+pub struct ChatTurn {
+    pub role: String,
+    pub content: String,
+}
+
+/// 같이 고르기의 AI 정렬. 참여자들의 요청을 들어온 순서대로 쌓은 대화 전체를 보내고,
+/// 답변 본문(JSON 텍스트)을 그대로 돌려준다 — 해석은 프론트(`src/share/ai.ts`)가 한다.
+/// 첫 메시지가 system 이 아니면 기본 시스템 프롬프트를 앞에 붙인다.
+#[tauri::command]
+pub async fn fabrix_chat(conf: FabrixConf, messages: Vec<ChatTurn>) -> Result<String, String> {
+    if messages.is_empty() {
+        return Err("보낼 메시지가 없어요.".into());
+    }
+    let mut out: Vec<ChatMessage<'_>> = Vec::with_capacity(messages.len() + 1);
+    if messages[0].role != "system" {
+        out.push(ChatMessage {
+            role: "system",
+            content: SYSTEM_PROMPT,
+        });
+    }
+    for m in &messages {
+        let role = match m.role.as_str() {
+            "system" => "system",
+            "user" => "user",
+            "assistant" => "assistant",
+            other => return Err(format!("알 수 없는 메시지 역할이에요: {other}")),
+        };
+        out.push(ChatMessage {
+            role,
+            content: &m.content,
+        });
+    }
+    complete(&conf, out).await
 }

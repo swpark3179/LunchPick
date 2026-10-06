@@ -5,6 +5,7 @@ import App from './App';
 import ErrorBoundary, { AppCrash } from './components/ErrorBoundary';
 import { toastError } from './store/uiStore';
 import './styles/global.css';
+import './styles/together.css';
 
 // 이벤트 핸들러·비동기 코드의 예외는 ErrorBoundary 가 못 잡으니 토스트로라도 알린다.
 window.addEventListener('unhandledrejection', (e) => toastError(e.reason, '예상치 못한 오류'));

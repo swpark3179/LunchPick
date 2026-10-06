@@ -39,11 +39,24 @@ export type FabrixConf = {
   modelId: string;
 };
 
+export type ShareMode = 'host' | 'join';
+
 export type Settings = {
-  /** 공유 서버 (이번 버전에서는 비활성 — 값만 보존한다) */
+  /** 같이 고르기 — 호스트로 열 때의 포트 */
   port: string;
+  /** 같이 고르기에서 다른 사람에게 보일 내 이름과 색 */
   name: string;
+  hue: number;
+  /** 다시 접속해도 같은 사람으로 알아보기 위한 고정 id (처음 실행 때 만든다) */
+  shareId: string;
+  /** 앱을 켜면 공유 서버도 함께 시작 */
   autoStart: boolean;
+  /** 설정 화면에서 마지막으로 고른 탭 */
+  shareMode: ShareMode;
+  /** 참여할 호스트 주소·포트와 최근 접속한 주소 */
+  joinHost: string;
+  joinPort: string;
+  recentHosts: string[];
   /** 표시 / 동작 */
   animSpeed: AnimSpeed;
   menuPreview: 2 | 3;

@@ -1,0 +1,335 @@
+/* 같이 고르기 · 실시간 공유 서버 화면의 애니메이션.
+   일반 전환은 global.css 의 prefers-reduced-motion 규칙을 따르고,
+   무작위 뽑기·사다리처럼 연출 자체가 기능인 부분만 .keep-motion 으로 감싼다. */
+
+@keyframes lp-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes lp-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes lp-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.55);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes lp-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes lp-card-out {
+  to {
+    opacity: 0;
+    transform: scale(0.8) translateX(-18px);
+    filter: blur(1px);
+  }
+}
+
+@keyframes lp-slide-left {
+  from {
+    opacity: 0;
+    transform: translateX(22px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes lp-slide-right {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 서버가 켜져 있을 때 퍼져 나가는 레이더 */
+@keyframes lp-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+@keyframes lp-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes lp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes lp-shake {
+  10%,
+  90% {
+    transform: translateX(-1px);
+  }
+  20%,
+  80% {
+    transform: translateX(3px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-5px);
+  }
+  40%,
+  60% {
+    transform: translateX(5px);
+  }
+}
+
+@keyframes lp-dot {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  40% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+
+@keyframes lp-shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+/* 무작위 뽑기에서 당첨된 카드에 퍼지는 링 */
+@keyframes lp-land {
+  0% {
+    box-shadow: 0 0 0 0 oklch(0.56 0.16 40 / 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 18px oklch(0.56 0.16 40 / 0);
+  }
+}
+
+@keyframes lp-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(26px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes lp-zoom-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.82) translateY(16px);
+  }
+  65% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes lp-confetti {
+  0% {
+    transform: translate3d(0, -20px, 0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--dx, 0px), 105vh, 0) rotate(var(--rot, 540deg));
+    opacity: 0.9;
+  }
+}
+
+@keyframes lp-bounce {
+  0%,
+  100% {
+    transform: none;
+  }
+  30% {
+    transform: translateY(-5px);
+  }
+  55% {
+    transform: translateY(1px);
+  }
+}
+
+@keyframes lp-blur-in {
+  from {
+    opacity: 0;
+    filter: blur(5px);
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    filter: none;
+    transform: none;
+  }
+}
+
+@keyframes lp-confirm {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.lp-fade-up {
+  animation: lp-fade-up 0.36s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.lp-pop {
+  animation: lp-pop 0.42s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+.lp-card-in {
+  animation: lp-card-in 0.38s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.lp-card-out {
+  animation: lp-card-out 0.26s cubic-bezier(0.4, 0, 1, 1) both;
+  pointer-events: none;
+}
+.lp-slide-left {
+  animation: lp-slide-left 0.36s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.lp-slide-right {
+  animation: lp-slide-right 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.lp-shake {
+  animation: lp-shake 0.42s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+.lp-blur-in {
+  animation: lp-blur-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.lp-bounce {
+  animation: lp-bounce 0.5s ease-out;
+}
+
+/* ---------------- 같이 고르기 카드 / 버튼 ---------------- */
+.tg-card {
+  transition:
+    box-shadow 0.18s,
+    background 0.18s,
+    transform 0.18s;
+}
+.tg-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 1px oklch(0.84 0.01 75),
+    0 8px 20px oklch(0.4 0.03 60 / 0.1) !important;
+}
+.tg-card.is-cand:hover {
+  box-shadow:
+    0 0 0 2px oklch(0.56 0.16 40),
+    0 8px 22px oklch(0.56 0.16 40 / 0.18) !important;
+}
+.tg-card.is-busy {
+  cursor: default !important;
+}
+.tg-card.is-busy:hover {
+  transform: none;
+}
+.tg-mini {
+  opacity: 0.6;
+  transition:
+    opacity 0.15s,
+    background 0.15s,
+    color 0.15s;
+}
+.tg-card:hover .tg-mini {
+  opacity: 1;
+}
+.tg-mini:hover {
+  background: oklch(0.95 0.006 75) !important;
+}
+.tg-mini.is-no:hover {
+  background: oklch(0.95 0.03 25) !important;
+  color: oklch(0.5 0.17 25) !important;
+}
+.tg-dis:hover {
+  background: oklch(0.985 0.004 75) !important;
+}
+.tg-chip:hover {
+  box-shadow: inset 0 0 0 1px oklch(0.56 0.16 40) !important;
+}
+.tg-member .tg-kick {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.tg-member:hover .tg-kick {
+  opacity: 1;
+}
+.tg-recent:hover {
+  background: oklch(0.95 0.02 50) !important;
+}
+
+/* 키워드 분석 중 자리표시 */
+.lp-skeleton {
+  background: linear-gradient(
+    90deg,
+    oklch(0.93 0.01 250) 0%,
+    oklch(0.97 0.02 250) 50%,
+    oklch(0.93 0.01 250) 100%
+  );
+  background-size: 200% 100%;
+  animation: lp-shimmer 1.3s linear infinite;
+}
+
+/* 후보 칩 줄: 넘치면 가로로 밀어서 본다 */
+.tg-tray-chips::-webkit-scrollbar {
+  height: 6px;
+}
