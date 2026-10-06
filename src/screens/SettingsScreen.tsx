@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 
 import Seg from '../components/Seg';
+import Toggle from '../components/Toggle';
+import ShareCard from './settings/ShareCard';
 import {
   ERR_NO_CREDS,
   SECRET_CLIENT_KEY,
@@ -257,7 +259,7 @@ export default function SettingsScreen() {
     <div style={{ flex: 1, minWidth: 0, overflow: 'auto', position: 'relative' }}>
       <div
         style={{
-          maxWidth: 760,
+          maxWidth: 800,
           padding: '22px 28px 40px',
           display: 'flex',
           flexDirection: 'column',
@@ -267,76 +269,13 @@ export default function SettingsScreen() {
         <div>
           <div style={{ fontSize: 22, fontWeight: 750, letterSpacing: '-0.02em' }}>설정</div>
           <div style={{ fontSize: 13, color: MUTED, marginTop: 4 }}>
-            AI 추천에 쓸 FabriX 키를 등록하고, 식당 목록을 파일로 주고받을 수 있어요.
+            동료와 같이 고를 서버를 켜거나, 동료의 방에 접속할 수 있어요. AI 키와 식당 목록 파일도 여기서
+            관리해요.
           </div>
         </div>
 
-        {/* -------------------------------------------- 실시간 공유 서버 (준비 중) */}
-        <div style={cardStyle}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 10,
-            }}
-          >
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 750 }}>실시간 공유 서버</div>
-              <div style={{ fontSize: 12.5, color: MUTED, marginTop: 3, lineHeight: 1.5 }}>
-                이 PC에서 로컬 서버를 띄우고, 같은 사내망의 동료가 브라우저로 접속해 투표·의견을
-                실시간으로 주고받는 기능이에요. 다음 버전에서 제공합니다.
-              </div>
-            </div>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 7,
-                height: 28,
-                padding: '0 12px',
-                borderRadius: 14,
-                background: 'oklch(0.95 0.004 75)',
-                color: 'oklch(0.45 0.012 60)',
-                fontSize: 12.5,
-                fontWeight: 700,
-                whiteSpace: 'nowrap',
-                flex: 'none',
-              }}
-            >
-              <span
-                style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: '50%',
-                  background: 'oklch(0.75 0.01 60)',
-                }}
-              />
-              준비 중
-            </div>
-          </div>
-          <div style={{ ...gridStyle, opacity: 0.55, pointerEvents: 'none' }}>
-            <span style={rowLabel}>포트</span>
-            <input
-              value={s.port}
-              readOnly
-              disabled
-              style={{
-                ...inputStyle,
-                width: 110,
-                background: 'oklch(0.965 0.004 75)',
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            />
-            <span style={rowLabel}>내 이름</span>
-            <input value={s.name} readOnly disabled style={{ ...inputStyle, width: 200 }} />
-            <span style={rowLabel}>자동 시작</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-              <Toggle on={s.autoStart} />
-              앱을 켜면 공유 서버도 함께 시작
-            </div>
-          </div>
-        </div>
+        {/* -------------------------------------------- 실시간 공유 서버 */}
+        <ShareCard />
 
         {/* -------------------------------------------- AI (FabriX) */}
         <div style={cardStyle}>
@@ -344,7 +283,8 @@ export default function SettingsScreen() {
             <div style={{ fontSize: 15, fontWeight: 750 }}>AI 추천 (FabriX)</div>
             <div style={{ fontSize: 12.5, color: MUTED, marginTop: 3, lineHeight: 1.5 }}>
               FabriX 포털에서 &lsquo;LLM Serving APIs&rsquo; 를 신청하면 받는 값이에요. 키는 Windows
-              자격 증명 관리자에 저장되고, 호출은 앱 내부에서만 이뤄집니다.
+              자격 증명 관리자에 저장되고, 호출은 앱 내부에서만 이뤄집니다. 같이 고르기의 AI 정렬은 호스트
+              PC의 이 설정으로 처리돼요. 접속한 동료에게 키는 전달되지 않아요.
             </div>
           </div>
 
@@ -601,37 +541,6 @@ export default function SettingsScreen() {
 }
 
 // ---------------------------------------------------------------- 조각
-
-function Toggle({ on }: { on: boolean }) {
-  return (
-    <div
-      style={{
-        width: 34,
-        height: 20,
-        borderRadius: 10,
-        background: on ? AC : 'oklch(0.85 0.008 75)',
-        position: 'relative',
-        transition: 'background .2s',
-        flex: 'none',
-      }}
-    >
-      <div
-        style={{
-          position: 'absolute',
-          top: 2,
-          left: 2,
-          width: 16,
-          height: 16,
-          borderRadius: '50%',
-          background: 'white',
-          transform: on ? 'translateX(14px)' : 'none',
-          transition: 'transform .2s',
-          boxShadow: '0 1px 2px rgba(0,0,0,.2)',
-        }}
-      />
-    </div>
-  );
-}
 
 function SavedBadge() {
   return (

@@ -9,10 +9,13 @@ import { windowShow } from './lib/ipc';
 import ListScreen from './screens/ListScreen';
 import PickScreen from './screens/PickScreen';
 import SettingsScreen from './screens/SettingsScreen';
+import EndedDialog from './screens/together/EndedDialog';
+import TogetherScreen from './screens/together/TogetherScreen';
 import { useData } from './store/dataStore';
 import { useList } from './store/listStore';
 import { clearTimers, usePick } from './store/pickStore';
 import { useSettings } from './store/settingsStore';
+import { bootShare } from './store/shareStore';
 import { toastError, useUi } from './store/uiStore';
 import { APP_BG, MUTED } from './theme';
 
@@ -33,6 +36,8 @@ export default function App() {
         // 로드에 실패해도 창은 띄워야 한다 (visible:false 로 시작하므로).
         await windowShow();
       }
+      // '자동 시작' 이 켜져 있으면 공유 서버를 연다 (식당·설정을 불러온 뒤에).
+      await bootShare();
     })();
   }, []);
 
@@ -110,11 +115,15 @@ export default function App() {
             <ListScreen />
           ) : view === 'pick' ? (
             <PickScreen />
+          ) : view === 'together' ? (
+            <TogetherScreen />
           ) : (
             <SettingsScreen />
           )}
         </ErrorBoundary>
       </div>
+      {/* 같이 고르기가 끝나면(호스트 종료·내보냄·연결 끊김) 어느 화면에서든 한 번 알린다. */}
+      <EndedDialog />
       {/* 모달이 깨지면 닫고 알린다 — 목록 화면은 그대로 쓸 수 있다. */}
       <ErrorBoundary
         resetKey={modalOpen}

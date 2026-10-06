@@ -108,6 +108,12 @@ export const fabrixTest = (conf: FabrixConf) => invoke<string>('fabrix_test', { 
 export const fabrixRecommend = (conf: FabrixConf, prompt: string) =>
   invoke<AiPick[]>('fabrix_recommend', { conf, prompt });
 
+export type ChatTurn = { role: 'system' | 'user' | 'assistant'; content: string };
+
+/** 같이 고르기의 멀티턴 AI 정렬. 답변 본문(JSON 텍스트)을 그대로 받는다. */
+export const fabrixChat = (conf: FabrixConf, messages: ChatTurn[]) =>
+  invoke<string>('fabrix_chat', { conf, messages });
+
 // ---------------------------------------------------------------- 창 / 클립보드 / 다이얼로그
 
 export async function copyText(text: string): Promise<void> {

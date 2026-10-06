@@ -7,15 +7,19 @@ import {
   saveSettings,
   secretExists,
 } from '../lib/ipc';
-import type { AnimSpeed, FabrixConf, Settings } from '../lib/types';
+import type { AnimSpeed, FabrixConf, RecentHost, Settings } from '../lib/types';
 import { toastError } from './uiStore';
 
 const SAVE_DEBOUNCE_MS = 400;
 
 export const DEFAULTS: Settings = {
   port: '8787',
-  name: '나',
+  name: '',
+  shareId: '',
   autoStart: false,
+  shareMode: 'host',
+  joinAddr: '',
+  recentHosts: [],
   animSpeed: '보통',
   menuPreview: 3,
   showPrices: true,
@@ -41,11 +45,31 @@ type SettingsState = Settings & {
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
+/** 최근 접속 목록 — 모양이 어긋난 항목은 버린다. */
+const cleanRecents = (raw: unknown): RecentHost[] =>
+  (Array.isArray(raw) ? raw : [])
+    .map((x) =>
+      typeof x === 'string'
+        ? { addr: x, name: '' }
+        : x && typeof x === 'object'
+          ? { addr: String((x as RecentHost).addr ?? ''), name: String((x as RecentHost).name ?? '') }
+          : null,
+    )
+    .filter((x): x is RecentHost => !!x && !!x.addr)
+    .slice(0, 4);
+
+const newShareId = () =>
+  Array.from({ length: 12 }, () => Math.floor(Math.random() * 36).toString(36)).join('');
+
 function persistable(s: SettingsState): Settings {
   return {
     port: s.port,
     name: s.name,
+    shareId: s.shareId,
     autoStart: s.autoStart,
+    shareMode: s.shareMode,
+    joinAddr: s.joinAddr,
+    recentHosts: s.recentHosts,
     animSpeed: s.animSpeed,
     menuPreview: s.menuPreview,
     showPrices: s.showPrices,
@@ -81,8 +105,13 @@ export const useSettings = create<SettingsState>((set, get) => ({
       // 중첩 객체는 얕은 병합이 되지 않으니 직접 합친다.
       fabrix: { ...DEFAULTS.fabrix, ...(loaded?.fabrix ?? {}) },
       fabrixModels: loaded?.fabrixModels ?? [],
+      recentHosts: cleanRecents(loaded?.recentHosts),
+      // 예전 버전의 기본값 '나' 는 다른 사람에게 이름으로 보이면 헷갈리니 비워서 다시 정하게 한다.
+      name: loaded?.name === '나' ? '' : (loaded?.name ?? DEFAULTS.name),
       ready: true,
     });
+    // 같이 고르기에서 나를 알아보는 id 는 한 번 만들면 바꾸지 않는다.
+    if (!get().shareId) get().patch({ shareId: newShareId() });
     await get().refreshSecrets();
   },
 

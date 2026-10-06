@@ -1,5 +1,6 @@
 import { AC, HAIRLINE, PANEL } from '../theme';
 import { windowClose, windowMinimize, windowToggleMaximize } from '../lib/ipc';
+import { shutdownShare } from '../store/shareStore';
 
 const BTN: React.CSSProperties = {
   width: 46,
@@ -73,7 +74,12 @@ export default function TitleBar() {
           className="tb-close"
           style={{ ...BTN, fontSize: 13, color: 'oklch(0.3 0.01 60)' }}
           title="닫기"
-          onClick={() => void windowClose()}
+          onClick={() => {
+            // 같이 고르기 중이면 참여자들에게 작별 인사를 보내고 닫는다 (오래 걸리면 그냥 닫는다).
+            void Promise.race([shutdownShare(), new Promise((r) => setTimeout(r, 600))]).finally(
+              () => void windowClose(),
+            );
+          }}
         >
           ✕
         </div>

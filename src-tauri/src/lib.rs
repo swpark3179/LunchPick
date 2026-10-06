@@ -1,11 +1,13 @@
 mod fabrix;
 mod secrets;
+mod share;
 mod storage;
 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .manage(share::ShareState::default())
         .invoke_handler(tauri::generate_handler![
             storage::load_data,
             storage::save_data,
@@ -20,6 +22,15 @@ pub fn run() {
             fabrix::fabrix_models,
             fabrix::fabrix_test,
             fabrix::fabrix_recommend,
+            fabrix::fabrix_chat,
+            share::share_local_info,
+            share::share_host_start,
+            share::share_host_stop,
+            share::share_host_send,
+            share::share_host_kick,
+            share::share_client_connect,
+            share::share_client_send,
+            share::share_client_disconnect,
         ])
         .run(tauri::generate_context!())
         .expect("점심픽을 실행하는 중 오류가 발생했습니다");
