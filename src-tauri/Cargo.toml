@@ -1,0 +1,31 @@
+[package]
+name = "lunchpick"
+version = "0.1.0"
+description = "LunchPick desktop app"
+authors = ["s-w.park"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "lunchpick_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+keyring = { version = "3", features = ["windows-native"] }
+# native-tls: Windows cert store (schannel). Works behind corporate proxies / private root CAs.
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

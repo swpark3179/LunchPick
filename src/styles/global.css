@@ -1,0 +1,156 @@
+/* 점심픽 전역 스타일.
+   디자인의 인라인 스타일은 컴포넌트에 그대로 두고, 여기에는
+   (1) 폰트/리셋 (2) 디자인의 style-hover / style-focus 속성을 옮긴 클래스만 둔다. */
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('../assets/fonts/PretendardVariable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: oklch(0.975 0.004 75);
+  overflow: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Pretendard', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  color: oklch(0.24 0.012 60);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 데스크탑 앱이라 전역 선택은 끄고, 입력 요소에서만 되살린다. */
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+a {
+  color: oklch(0.45 0.14 40);
+}
+a:hover {
+  color: oklch(0.38 0.14 40);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(0.86 0.008 75);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+input::placeholder {
+  color: oklch(0.68 0.01 60);
+}
+
+button {
+  font-family: inherit;
+}
+
+/* 브라우저 기본 포커스 링은 쓰지 않고, 디자인의 포커스 스타일을 쓴다.
+   단 키보드 탐색을 위해 :focus-visible 은 남긴다. */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[role='button']:focus-visible {
+  outline: 2px solid oklch(0.56 0.16 40);
+  outline-offset: 1px;
+}
+
+/* ---------------- 타이틀바 ---------------- */
+.tb-btn:hover {
+  background: oklch(0.91 0.006 75);
+}
+.tb-close:hover {
+  background: oklch(0.58 0.2 25);
+  color: white;
+}
+
+/* ---------------- 버튼 ---------------- */
+.btn-accent:hover {
+  background: oklch(0.5 0.16 40) !important;
+}
+/* 흰 배경 + 테두리 보조 버튼 (복사 등) */
+.btn-soft:hover {
+  background: oklch(0.96 0.005 75);
+}
+/* 배경 없는 고스트 버튼 */
+.btn-ghost:hover {
+  background: oklch(0.95 0.005 75);
+}
+.btn-ghost-danger:hover {
+  background: oklch(0.96 0.02 25);
+}
+.btn-disabled {
+  cursor: not-allowed !important;
+  opacity: 0.55;
+}
+
+/* ---------------- 입력 ---------------- */
+.inp:focus {
+  border-color: oklch(0.56 0.16 40);
+}
+/* 목록 검색창: 테두리 + 3px 링 */
+.inp-ring:focus {
+  border-color: oklch(0.56 0.16 40);
+  box-shadow: 0 0 0 3px oklch(0.56 0.16 40 / 0.15);
+}
+
+/* ---------------- 카드 / 행 ---------------- */
+.card-lift {
+  transition: box-shadow 0.15s, transform 0.15s;
+}
+.card-lift:hover {
+  transform: translateY(-1px);
+}
+.row-hover:hover {
+  background: oklch(0.98 0.006 60) !important;
+}
+.pick-row:hover {
+  background: oklch(0.98 0.004 75);
+}
+.srv-card:hover {
+  border-color: oklch(0.82 0.01 75);
+}
+.cup-card:hover {
+  box-shadow: 0 0 0 2px oklch(0.56 0.16 40), 0 10px 30px oklch(0.4 0.03 60 / 0.12) !important;
+}
+
+/* 비활성 카드(공유 서버) 안의 입력/버튼은 포인터 이벤트만 죽인다 */
+.is-disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* 움직임 최소화 설정을 존중한다.
+   단, 고르기 엔진(.keep-motion)은 돌아가는 연출 자체가 기능이라 제외하고,
+   속도는 설정 화면의 '애니메이션 속도'로 조절한다.
+   (Windows 애니메이션 효과를 꺼 둔 PC에서도 엔진 연출은 보여야 한다) */
+@media (prefers-reduced-motion: reduce) {
+  :not(.keep-motion, .keep-motion *),
+  :not(.keep-motion, .keep-motion *)::before,
+  :not(.keep-motion, .keep-motion *)::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
