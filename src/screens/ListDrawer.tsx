@@ -193,6 +193,8 @@ export default function ListDrawer() {
             display: 'flex',
             alignItems: 'center',
             gap: 10,
+            minHeight: 48,
+            boxSizing: 'border-box',
             background: 'oklch(0.975 0.004 75)',
             borderRadius: 8,
             padding: '10px 12px',
@@ -202,31 +204,34 @@ export default function ListDrawer() {
           <span
             style={{
               flex: 1,
-              fontSize: 17,
-              fontWeight: 650,
+              fontSize: L.phone ? 17 : 14,
+              fontWeight: L.phone ? 650 : 400,
+              color: L.phone ? undefined : MUTED_2,
               fontVariantNumeric: 'tabular-nums',
             }}
           >
-            {L.phone}
+            {L.phone || '번호 없음'}
           </span>
-          <button
-            type="button"
-            onClick={() => copy(L.phone)}
-            style={{
-              height: 28,
-              padding: '0 10px',
-              border: 'none',
-              borderRadius: 6,
-              background: INK,
-              color: 'white',
-              font: 'inherit',
-              fontSize: 12.5,
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            복사
-          </button>
+          {L.phone ? (
+            <button
+              type="button"
+              onClick={() => copy(L.phone)}
+              style={{
+                height: 28,
+                padding: '0 10px',
+                border: 'none',
+                borderRadius: 6,
+                background: INK,
+                color: 'white',
+                font: 'inherit',
+                fontSize: 12.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              복사
+            </button>
+          ) : null}
         </div>
 
         {eaten ? (

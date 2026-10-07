@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-import { fmtPhone, uid } from '../lib/util';
+import { fmtPhone, phoneOk, uid } from '../lib/util';
 import type { Restaurant } from '../lib/types';
 import { useData } from '../store/dataStore';
 import { useList } from '../store/listStore';
@@ -53,11 +53,10 @@ export default function RestaurantModal() {
   const save = () => {
     if (!modal) return;
     const name = f.name.trim();
-    const digits = f.phone.replace(/\D/g, '');
     const { restaurants, apply, updateRest } = useData.getState();
     const err = !name
       ? '식당 이름을 입력하세요.'
-      : digits.length < 9
+      : !phoneOk(f.phone)
         ? '전화번호를 정확히 입력하세요.'
         : restaurants.some((r) => r.name === name && r.id !== modal.id)
           ? '같은 이름의 식당이 이미 있어요.'
@@ -170,7 +169,10 @@ export default function RestaurantModal() {
         </div>
 
         <label style={labelStyle}>
-          전화번호 *
+          <span>
+            전화번호{' '}
+            <span style={{ fontWeight: 400, color: 'oklch(0.6 0.01 60)' }}>· 비워둬도 돼요</span>
+          </span>
           <input
             className="inp"
             value={f.phone}

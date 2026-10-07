@@ -20,11 +20,15 @@ export const won = (p: number | null | undefined) =>
   p === null || p === undefined || (p as unknown) === '' ? '' : `${Number(p).toLocaleString('ko-KR')}원`;
 
 /**
- * 입력 중에도 자연스럽게 하이픈을 넣는다. 02 지역번호와
- * 050X 안심번호(0507-1469-7968 처럼 앞자리가 4자리, 최대 12자리)만 특별 처리.
+ * 입력 중에도 자연스럽게 하이픈을 넣는다. 02 지역번호, 050X 안심번호
+ * (0507-1469-7968 처럼 앞자리가 4자리, 최대 12자리), 1588-1234 같은 대표번호(8자리)만 특별 처리.
  */
 export const fmtPhone = (v: string) => {
   const all = String(v).replace(/\D/g, '');
+  if (all.startsWith('1')) {
+    const d = all.slice(0, 8);
+    return d.length <= 4 ? d : `${d.slice(0, 4)}-${d.slice(4)}`;
+  }
   if (all.startsWith('050')) {
     const d = all.slice(0, 12);
     if (d.length <= 4) return d;
@@ -43,6 +47,12 @@ export const fmtPhone = (v: string) => {
   if (d.length <= 6) return `${d.slice(0, 3)}-${d.slice(3)}`;
   if (d.length <= 10) return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
   return `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}`;
+};
+
+/** 전화번호는 비워도 된다. 대표번호(1xxx)는 8자리, 나머지는 9자리 이상이어야 한다. */
+export const phoneOk = (v: string) => {
+  const d = v.replace(/\D/g, '');
+  return !d || (d.startsWith('1') ? d.length === 8 : d.length >= 9);
 };
 
 /** 가격 입력 필드용 — 숫자만 받아 천단위 구분을 붙인다. */

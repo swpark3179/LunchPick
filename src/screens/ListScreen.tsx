@@ -374,37 +374,39 @@ function RestaurantCard({ r, selected, eaten, recent, onOpen, onFav, onCopy }: C
           >
             {r.name}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 5 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 5, minHeight: 22 }}>
             <span
               style={{
                 fontSize: 13.5,
                 fontVariantNumeric: 'tabular-nums',
-                color: 'oklch(0.36 0.012 60)',
+                color: r.phone ? 'oklch(0.36 0.012 60)' : MUTED_3,
               }}
             >
-              {r.phone}
+              {r.phone || '번호 없음'}
             </span>
-            <button
-              type="button"
-              className="btn-soft"
-              onClick={(e) => {
-                e.stopPropagation();
-                onCopy();
-              }}
-              style={{
-                height: 22,
-                padding: '0 7px',
-                border: `1px solid ${LINE}`,
-                borderRadius: 5,
-                background: 'white',
-                font: 'inherit',
-                fontSize: 11.5,
-                color: 'oklch(0.45 0.012 60)',
-                cursor: 'pointer',
-              }}
-            >
-              복사
-            </button>
+            {r.phone ? (
+              <button
+                type="button"
+                className="btn-soft"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCopy();
+                }}
+                style={{
+                  height: 22,
+                  padding: '0 7px',
+                  border: `1px solid ${LINE}`,
+                  borderRadius: 5,
+                  background: 'white',
+                  font: 'inherit',
+                  fontSize: 11.5,
+                  color: 'oklch(0.45 0.012 60)',
+                  cursor: 'pointer',
+                }}
+              >
+                복사
+              </button>
+            ) : null}
           </div>
         </div>
         <button
@@ -595,30 +597,33 @@ function TableRow({ r, selected, onOpen, onFav, onCopy }: RowProps) {
           gap: 6,
           fontSize: 13,
           fontVariantNumeric: 'tabular-nums',
+          color: r.phone ? undefined : MUTED_3,
         }}
       >
-        {r.phone}
-        <button
-          type="button"
-          className="btn-soft"
-          onClick={(e) => {
-            e.stopPropagation();
-            onCopy();
-          }}
-          style={{
-            height: 20,
-            padding: '0 6px',
-            border: `1px solid ${LINE}`,
-            borderRadius: 4,
-            background: 'white',
-            font: 'inherit',
-            fontSize: 11,
-            color: 'oklch(0.45 0.012 60)',
-            cursor: 'pointer',
-          }}
-        >
-          복사
-        </button>
+        {r.phone || '번호 없음'}
+        {r.phone ? (
+          <button
+            type="button"
+            className="btn-soft"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCopy();
+            }}
+            style={{
+              height: 20,
+              padding: '0 6px',
+              border: `1px solid ${LINE}`,
+              borderRadius: 4,
+              background: 'white',
+              font: 'inherit',
+              fontSize: 11,
+              color: 'oklch(0.45 0.012 60)',
+              cursor: 'pointer',
+            }}
+          >
+            복사
+          </button>
+        ) : null}
       </span>
       <span
         style={{
