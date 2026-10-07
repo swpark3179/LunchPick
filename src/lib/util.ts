@@ -19,9 +19,20 @@ export const pick = <T,>(a: readonly T[]): T => a[Math.floor(Math.random() * a.l
 export const won = (p: number | null | undefined) =>
   p === null || p === undefined || (p as unknown) === '' ? '' : `${Number(p).toLocaleString('ko-KR')}원`;
 
-/** 입력 중에도 자연스럽게 하이픈을 넣는다. 02 지역번호만 특별 처리 (목업과 동일). */
+/**
+ * 입력 중에도 자연스럽게 하이픈을 넣는다. 02 지역번호와
+ * 050X 안심번호(0507-1469-7968 처럼 앞자리가 4자리, 최대 12자리)만 특별 처리.
+ */
 export const fmtPhone = (v: string) => {
-  const d = String(v).replace(/\D/g, '').slice(0, 11);
+  const all = String(v).replace(/\D/g, '');
+  if (all.startsWith('050')) {
+    const d = all.slice(0, 12);
+    if (d.length <= 4) return d;
+    if (d.length <= 7) return `${d.slice(0, 4)}-${d.slice(4)}`;
+    if (d.length <= 11) return `${d.slice(0, 4)}-${d.slice(4, 7)}-${d.slice(7)}`;
+    return `${d.slice(0, 4)}-${d.slice(4, 8)}-${d.slice(8)}`;
+  }
+  const d = all.slice(0, 11);
   if (d.startsWith('02')) {
     if (d.length <= 2) return d;
     if (d.length <= 5) return `${d.slice(0, 2)}-${d.slice(2)}`;

@@ -42,6 +42,8 @@ export default function ListDrawer() {
   // 닫히는 애니메이션 동안 내용이 사라지지 않도록 마지막 선택을 붙잡아 둔다.
   const lastRef = useRef<Restaurant | null>(null);
   if (sel) lastRef.current = sel;
+  // 메뉴 추가: 메뉴 → (Tab) 가격 → (Enter) 추가 후 다시 메뉴 입력칸으로.
+  const menuNameRef = useRef<HTMLInputElement>(null);
   const L = sel ?? lastRef.current ?? restaurants[0] ?? EMPTY;
 
   const d = daysAgo(lastAt(history, L.id));
@@ -550,6 +552,7 @@ export default function ListDrawer() {
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           <input
+            ref={menuNameRef}
             className="inp"
             value={menuForm.name}
             onChange={(e) => setMenuForm({ name: e.target.value })}
@@ -575,7 +578,9 @@ export default function ListDrawer() {
             value={menuForm.price}
             onChange={(e) => setMenuForm({ price: priceFmt(e.target.value) })}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') addMenu();
+              if (e.key !== 'Enter') return;
+              addMenu();
+              menuNameRef.current?.focus();
             }}
             placeholder="가격(원)"
             style={{
