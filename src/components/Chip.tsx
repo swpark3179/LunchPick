@@ -15,6 +15,8 @@ type Props = {
   gap?: number;
   strike?: boolean;
   title?: string;
+  /** -1 이면 클릭은 되지만 Tab 순서에서는 빠진다. */
+  tabIndex?: number;
 };
 
 export default function Chip({
@@ -33,11 +35,12 @@ export default function Chip({
   gap = 7,
   strike = false,
   title,
+  tabIndex = 0,
 }: Props) {
   return (
     <div
       role="button"
-      tabIndex={0}
+      tabIndex={tabIndex}
       title={title}
       onClick={onClick}
       onKeyDown={(e) => {

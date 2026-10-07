@@ -268,27 +268,29 @@ export default function InfoDrawer({
                     {r.phone || '번호 없음'}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  className="tg-soft"
-                  onClick={() => {
-                    void copyText(r.phone);
-                    toast('전화번호를 복사했어요');
-                  }}
-                  style={{
-                    height: 32,
-                    padding: '0 12px',
-                    border: `1px solid ${INPUT_BORDER}`,
-                    borderRadius: 7,
-                    background: 'white',
-                    font: 'inherit',
-                    fontSize: 12.5,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  복사
-                </button>
+                {r.phone ? (
+                  <button
+                    type="button"
+                    className="tg-soft"
+                    onClick={() => {
+                      void copyText(r.phone);
+                      toast('전화번호를 복사했어요');
+                    }}
+                    style={{
+                      height: 32,
+                      padding: '0 12px',
+                      border: `1px solid ${INPUT_BORDER}`,
+                      borderRadius: 7,
+                      background: 'white',
+                      font: 'inherit',
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    복사
+                  </button>
+                ) : null}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 <div style={{ ...label, marginBottom: 6 }}>메뉴 {r.menus.length}개</div>

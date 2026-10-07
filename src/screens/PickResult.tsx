@@ -114,31 +114,34 @@ export default function PickResult() {
             <span
               style={{
                 flex: 1,
-                fontSize: 24,
-                fontWeight: 700,
+                fontSize: r.phone ? 24 : 16,
+                fontWeight: r.phone ? 700 : 400,
+                opacity: r.phone ? 1 : 0.6,
                 fontVariantNumeric: 'tabular-nums',
               }}
             >
-              {r.phone}
+              {r.phone || '번호 없음'}
             </span>
-            <button
-              type="button"
-              onClick={() => copy(r.phone)}
-              style={{
-                height: 32,
-                padding: '0 14px',
-                border: 'none',
-                borderRadius: 7,
-                background: 'white',
-                color: INK,
-                font: 'inherit',
-                fontSize: 13,
-                fontWeight: 650,
-                cursor: 'pointer',
-              }}
-            >
-              번호 복사
-            </button>
+            {r.phone ? (
+              <button
+                type="button"
+                onClick={() => copy(r.phone)}
+                style={{
+                  height: 32,
+                  padding: '0 14px',
+                  border: 'none',
+                  borderRadius: 7,
+                  background: 'white',
+                  color: INK,
+                  font: 'inherit',
+                  fontSize: 13,
+                  fontWeight: 650,
+                  cursor: 'pointer',
+                }}
+              >
+                번호 복사
+              </button>
+            ) : null}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -335,24 +338,28 @@ export default function PickResult() {
                     fontVariantNumeric: 'tabular-nums',
                   }}
                 >
-                  {r.phone}
-                  <button
-                    type="button"
-                    className="btn-soft"
-                    onClick={() => copy(r.phone)}
-                    style={{
-                      height: 24,
-                      padding: '0 8px',
-                      border: `1px solid ${LINE}`,
-                      borderRadius: 5,
-                      background: 'white',
-                      font: 'inherit',
-                      fontSize: 11.5,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    복사
-                  </button>
+                  <span style={r.phone ? undefined : { fontWeight: 400, color: MUTED }}>
+                    {r.phone || '번호 없음'}
+                  </span>
+                  {r.phone ? (
+                    <button
+                      type="button"
+                      className="btn-soft"
+                      onClick={() => copy(r.phone)}
+                      style={{
+                        height: 24,
+                        padding: '0 8px',
+                        border: `1px solid ${LINE}`,
+                        borderRadius: 5,
+                        background: 'white',
+                        font: 'inherit',
+                        fontSize: 11.5,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      복사
+                    </button>
+                  ) : null}
                 </div>
                 <button
                   type="button"

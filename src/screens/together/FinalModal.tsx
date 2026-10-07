@@ -151,27 +151,29 @@ export default function FinalModal({
             <span style={{ fontSize: 17, fontWeight: 750, fontVariantNumeric: 'tabular-nums', flex: 1 }}>
               {r.phone || '번호 없음'}
             </span>
-            <button
-              type="button"
-              className="tg-soft"
-              onClick={() => {
-                void copyText(r.phone);
-                toast('전화번호를 복사했어요');
-              }}
-              style={{
-                height: 30,
-                padding: '0 11px',
-                border: `1px solid ${INPUT_BORDER}`,
-                borderRadius: 7,
-                background: 'white',
-                font: 'inherit',
-                fontSize: 12.5,
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              번호 복사
-            </button>
+            {r.phone ? (
+              <button
+                type="button"
+                className="tg-soft"
+                onClick={() => {
+                  void copyText(r.phone);
+                  toast('전화번호를 복사했어요');
+                }}
+                style={{
+                  height: 30,
+                  padding: '0 11px',
+                  border: `1px solid ${INPUT_BORDER}`,
+                  borderRadius: 7,
+                  background: 'white',
+                  font: 'inherit',
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                번호 복사
+              </button>
+            ) : null}
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
             <span style={{ fontSize: 12, color: 'oklch(0.55 0.012 60)', width: 52, paddingTop: 2 }}>
