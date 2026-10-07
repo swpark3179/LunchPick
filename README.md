@@ -68,6 +68,9 @@ Samsung SDS FabriX **LLM Serving APIs** 를 쓴다. FabriX 포털에서 신청�
 없다. AI 가 실패하면(키 미설정·네트워크 오류·한도 초과·응답 파싱 실패) 무작위 선택으로 폴백해
 흐름이 막히지 않는다.
 
+FabriX 호출은 **프록시를 타지 않고 항상 DIRECT** 로 나간다. PC 에 `HTTP_PROXY`·`HTTPS_PROXY`·
+`ALL_PROXY` 환경변수나 Windows 인터넷 옵션 프록시가 잡혀 있어도 무시한다.
+
 **키 없이 테스트하기** — 바탕화면 `FabrixSample` 에 실 응답을 재생하는 목 서버가 있다.
 
 ```bash

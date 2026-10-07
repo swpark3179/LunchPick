@@ -94,8 +94,11 @@ fn load_creds() -> Result<Creds, String> {
     })
 }
 
+/// 프록시는 타지 않고 항상 DIRECT 로 붙는다. reqwest 는 기본값으로 `HTTP(S)_PROXY`·`ALL_PROXY`
+/// 환경변수와 OS 프록시 설정(Windows 인터넷 옵션 등)을 따라가는데, `no_proxy()` 가 이를 모두 끈다.
 fn client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(TIMEOUT_SECS))
         .build()
         .map_err(|e| format!("HTTP 클라이언트를 만들 수 없어요: {e}"))

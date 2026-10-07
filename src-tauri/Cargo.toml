@@ -20,7 +20,8 @@ tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 keyring = { version = "3", features = ["windows-native"] }
-# native-tls: Windows cert store (schannel). Works behind corporate proxies / private root CAs.
+# native-tls: Windows cert store (schannel). Trusts private/corporate root CAs.
+# 프록시는 쓰지 않는다 — fabrix.rs 의 클라이언트가 no_proxy() 로 항상 DIRECT 연결한다.
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
 # 같이 고르기: 사내망 WebSocket 서버/접속 (TLS 없음 — 같은 망 안에서만 쓴다)
 tokio = { version = "1", features = ["net", "sync", "time", "macros"] }
