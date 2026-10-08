@@ -1,15 +1,16 @@
 /**
  * 같이 고르기 방 (시안: 같이 고르기.dc.html › 같이 고르기 방).
  *
- *   ┌ 머리: ‹ · 방 이름 · ①가기 싫은 곳 빼기 ─ ②후보 올리기 ─ ③추려내기 ─ ④최종 확정 · 나가기 ┐
+ *   ┌ 머리: ‹ · 방 이름 · ①가기 싫은 곳 빼기 ─ ②후보 올리기 ─ ③추려내기 ─ ④최종 확정 ─ ⑤메뉴 고르기 ─ ⑥예약 완료 · 나가기 ┐
  *   │ 가기 싫은 곳 │ 남은 식당 (무작위 · AI 정렬 · 카드) · 후보 트레이 │ 참여자 · 채팅 │
  *   └─────────────────────────────────────────────────────────────────────┘
+ * 확정되면 가운데 열은 메뉴 고르기 · 예약(OrderPanel)으로 바뀐다.
  * 사이드바는 접히고(Sidebar), 방은 아래에서 떠오른다(lp-rise).
  */
 import { useCallback, useEffect, useState } from 'react';
 
 import type { RoomState } from '../../share/protocol';
-import { shortName } from '../../share/protocol';
+import { reservationAuthor, shortName } from '../../share/protocol';
 import { useShare } from '../../store/shareStore';
 import { useUi } from '../../store/uiStore';
 import { AC, AINK, MUTED } from '../../theme';
@@ -20,7 +21,10 @@ import DislikeColumn from './DislikeColumn';
 import FinalModal from './FinalModal';
 import InfoDrawer from './InfoDrawer';
 import LadderModal from './LadderModal';
+import OrderPanel from './OrderPanel';
 import { IconBack, IconCheck, IconSync, StatusDot } from './parts';
+import ReservedModal from './ReservedModal';
+import ReserveModal from './ReserveModal';
 import SyncBanner from './SyncBanner';
 import { useRollAnim } from './useRoomAnim';
 
@@ -50,6 +54,11 @@ function Room({ room }: { room: RoomState }) {
   const closeAi = useCallback(() => setAiOpen(null), []);
   /** 닫은 확정 화면 (확정 시각으로 구분) — 각자 닫는다 */
   const [finSeen, setFinSeen] = useState<number | null>(null);
+  /** 닫은 예약 알림 (예약·수정 시각으로 구분) — 각자 닫는다 */
+  const [resSeen, setResSeen] = useState<number | null>(null);
+  /** 내 예약 화면 — 나만 연다 (다른 사람들에게는 '예약하는 중'으로 보인다) */
+  const [reserveOpen, setReserveOpen] = useState(false);
+  const closeReserve = useCallback(() => setReserveOpen(false), []);
   const roll = useRollAnim(room.roll);
 
   const host = role === 'host';
@@ -61,7 +70,15 @@ function Room({ room }: { room: RoomState }) {
     : target
       ? `${target.host}:${target.port}`
       : '';
-  const finOpen = !!room.final && finSeen !== room.final.at;
+  const res = room.reservation;
+  // 예약 알림은 예약(수정)을 보낸 사람 말고 모두에게 뜬다. 떠 있는 동안 확정 화면은 감춘다.
+  const resOpen = !!res && resSeen !== res.at && reservationAuthor(res) !== me;
+  const finOpen = !!room.final && finSeen !== room.final.at && !resOpen;
+  const closeRes = () => {
+    if (res) setResSeen(res.at);
+    // 예약 알림을 닫으면 확정 화면이 뒤이어 뜨지 않게 한다.
+    if (room.final) setFinSeen(room.final.at);
+  };
   const finalName = room.final ? room.restaurants.find((r) => r.id === room.final!.restId)?.name : '';
   const sync = room.sync && !room.sync.end ? room.sync : null;
   const syncAnswered = sync ? Object.keys(sync.answers).length : 0;
@@ -69,26 +86,32 @@ function Room({ room }: { room: RoomState }) {
     ? syncAnswered + room.members.filter((m) => m.online && sync.answers[m.id] === undefined).length
     : 0;
 
-  // Esc: 확정 화면 → AI 큐 팝업 → 식당 정보 순으로 닫는다 (사다리는 모두의 화면이라 ✕ 로만 닫는다).
+  // Esc: 예약 화면 → 예약 알림 → 확정 화면 → AI 큐 팝업 → 식당 정보 순으로 닫는다
+  // (사다리는 모두의 화면이라 ✕ 로만 닫는다).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (finOpen && room.final) setFinSeen(room.final.at);
+      if (reserveOpen) setReserveOpen(false);
+      else if (resOpen && res) {
+        setResSeen(res.at);
+        if (room.final) setFinSeen(room.final.at);
+      } else if (finOpen && room.final) setFinSeen(room.final.at);
       else if (aiOpen) setAiOpen(null);
       else if (detail) setDetail(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [finOpen, room.final, aiOpen, detail]);
+  }, [reserveOpen, resOpen, res, finOpen, room.final, aiOpen, detail]);
 
   // 보던 식당이 지워지면 정보 드로어를 닫는다.
   useEffect(() => {
     if (detail && !room.restaurants.some((r) => r.id === detail)) setDetail(null);
   }, [detail, room.restaurants]);
 
-  // 확정되면 열려 있던 식당 정보는 닫는다.
+  // 확정되면 열려 있던 식당 정보는 닫는다. 확정이 풀리면 예약 화면도 닫는다.
   useEffect(() => {
     if (room.final) setDetail(null);
+    else setReserveOpen(false);
   }, [room.final]);
 
   return (
@@ -168,13 +191,14 @@ function Room({ room }: { room: RoomState }) {
         </div>
         <Steps room={room} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>
-          {room.final && !finOpen ? (
+          {room.final && !finOpen && !resOpen ? (
             <div
               role="button"
               tabIndex={0}
-              onClick={() => setFinSeen(null)}
+              title={res ? '예약 내용 보기' : '확정 화면 다시 보기'}
+              onClick={() => (res ? setResSeen(null) : setFinSeen(null))}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') setFinSeen(null);
+                if (e.key === 'Enter') (res ? setResSeen : setFinSeen)(null);
               }}
               style={{
                 display: 'flex',
@@ -193,6 +217,7 @@ function Room({ room }: { room: RoomState }) {
             >
               <IconCheck size={14} />
               오늘은 {finalName}
+              {res ? ' · 예약 완료' : ''}
             </div>
           ) : null}
           <button
@@ -260,7 +285,17 @@ function Room({ room }: { room: RoomState }) {
         }}
       >
         <DislikeColumn room={room} me={me} onInfo={setDetail} />
-        <Board room={room} me={me} roll={roll} onInfo={setDetail} onAiOpen={setAiOpen} />
+        {room.final ? (
+          <OrderPanel
+            room={room}
+            me={me}
+            host={host}
+            onInfo={setDetail}
+            onReserve={() => setReserveOpen(true)}
+          />
+        ) : (
+          <Board room={room} me={me} roll={roll} onInfo={setDetail} onAiOpen={setAiOpen} />
+        )}
         <ChatPanel room={room} me={me} host={host} detail={detail} />
         <SyncBanner room={room} me={me} host={host} />
       </div>
@@ -268,23 +303,38 @@ function Room({ room }: { room: RoomState }) {
       <InfoDrawer room={room} id={detail} host={host} hostShort={hostShort} onClose={() => setDetail(null)} />
       {aiOpen ? <AiTurnModal room={room} me={me} turnId={aiOpen} onClose={closeAi} /> : null}
       {room.ladder ? <LadderModal room={room} me={me} /> : null}
+      {reserveOpen && room.final ? (
+        <ReserveModal room={room} me={me} host={host} onClose={closeReserve} />
+      ) : null}
       {finOpen ? <FinalModal room={room} me={me} onClose={() => setFinSeen(room.final!.at)} /> : null}
+      {resOpen ? <ReservedModal room={room} me={me} onClose={closeRes} /> : null}
     </div>
   );
 }
 
-/** ①가기 싫은 곳 빼기 ─ ②후보 올리기 ─ ③추려내기 ─ ④최종 확정. 지금 단계는 은은하게 빛난다. */
+/**
+ * ①가기 싫은 곳 빼기 ─ ②후보 올리기 ─ ③추려내기 ─ ④최종 확정 ─ ⑤메뉴 고르기 ─ ⑥예약 완료.
+ * 지금 단계는 은은하게 빛난다. 머리 폭(최소 창 1040px)에 맞게 확정 전에는 ①~④만, 확정 뒤에는 ④~⑥만 보이고,
+ * 지나간 ④⑤는 체크 동그라미로 줄인다 (이름은 툴팁, 식당 이름은 머리의 '오늘은 …' 에 보인다).
+ */
 function Steps({ room }: { room: RoomState }) {
   const exclCount = room.exclOrder.length;
   const candCount = Object.keys(room.cands).length;
   const finalName = room.final ? (room.restaurants.find((r) => r.id === room.final!.restId)?.name ?? '') : '';
-  const at = room.final ? 3 : room.ladder || candCount >= 2 ? 2 : exclCount || candCount ? 1 : 0;
+  const people = room.members.filter((m) => m.online || room.picks[m.id]?.items.length);
+  const picked = people.filter((m) => room.picks[m.id]?.items.length).length;
+  const res = room.reservation;
+  const at = res ? 5 : room.final ? 4 : room.ladder || candCount >= 2 ? 2 : exclCount || candCount ? 1 : 0;
   const steps: [string, string][] = [
     ['가기 싫은 곳 빼기', exclCount ? String(exclCount) : ''],
     ['후보 올리기', candCount ? String(candCount) : ''],
     ['추려내기', ''],
     ['최종 확정', finalName],
+    ['메뉴 고르기', room.final ? `${picked}/${people.length}` : ''],
+    ['예약 완료', res ? shortName(room.members.find((m) => m.id === res.by)?.name ?? '') : ''],
   ];
+  const last = steps.length - 1;
+  const shown = room.final ? [3, 4, 5] : [0, 1, 2, 3];
   return (
     <div
       style={{
@@ -297,18 +347,21 @@ function Steps({ room }: { room: RoomState }) {
         flexWrap: 'wrap',
       }}
     >
-      {steps.map(([label, count], i) => {
+      {shown.map((i, k) => {
+        const [label, count] = steps[i];
         const done = i < at;
         const cur = i === at;
+        const mini = room.final && done;
         return (
           <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <div
+              title={mini ? label : undefined}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 7,
                 height: 30,
-                padding: '0 12px 0 5px',
+                padding: mini ? '0 5px' : '0 12px 0 5px',
                 borderRadius: 15,
                 background: cur ? AC : done ? 'oklch(0.965 0.025 50)' : 'oklch(0.955 0.005 75)',
                 color: cur ? 'white' : done ? AINK : MUTED,
@@ -316,7 +369,7 @@ function Steps({ room }: { room: RoomState }) {
                 fontWeight: 650,
                 whiteSpace: 'nowrap',
                 transition: 'background .4s, color .4s',
-                animation: cur && i < 3 ? 'lp-glow 2.2s infinite' : 'none',
+                animation: cur && i < last ? 'lp-glow 2.2s infinite' : 'none',
               }}
             >
               <span
@@ -336,12 +389,12 @@ function Steps({ room }: { room: RoomState }) {
               >
                 {done ? <IconCheck size={11} stroke={3} /> : i + 1}
               </span>
-              {label}
-              {count ? (
+              {mini ? null : label}
+              {count && !mini ? (
                 <span style={{ fontVariantNumeric: 'tabular-nums', opacity: 0.75 }}>{count}</span>
               ) : null}
             </div>
-            {i < 3 ? (
+            {k < shown.length - 1 ? (
               <div
                 style={{
                   width: 16,
