@@ -8,8 +8,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type { Restaurant } from '../../lib/types';
+import { uid } from '../../lib/util';
 import { restTags, TAG_LABEL } from '../../share/ai';
-import { LIMITS, type RoomState, shortName } from '../../share/protocol';
+import { type AiTurn, LIMITS, type RoomState, shortName } from '../../share/protocol';
 import { useShare } from '../../store/shareStore';
 import { AC, AINK, CARD_RING, CH, INK, MUTED, MUTED_3 } from '../../theme';
 import CandTray from './CandTray';
@@ -40,19 +41,23 @@ export function boardOrder(room: RoomState): Restaurant[] {
   return [...room.restaurants].sort((a, b) => (idx.get(a.id) ?? 1e9) - (idx.get(b.id) ?? 1e9));
 }
 
-/** 내가 보낸 원문 — 내 화면에서만, 내 요청 칩의 툴팁으로 보여준다 (순서로 짝짓는다). */
-const myPrompts: string[] = [];
+/** 내가 보낸 원문 — 내 화면에서만, 내 요청 칩의 툴팁·팝업으로 보여준다 (요청에 붙인 ref 로 짝짓는다). */
+const myPrompts = new Map<string, string>();
+export const myPromptOf = (ref: string | undefined) => (ref ? myPrompts.get(ref) : undefined);
 
 export default function Board({
   room,
   me,
   roll,
   onInfo,
+  onAiOpen,
 }: {
   room: RoomState;
   me: string;
   roll: RollView | null;
   onInfo: (id: string) => void;
+  /** AI 큐 칩을 눌렀을 때 — 그 요청의 1~5위 팝업 */
+  onAiOpen: (turnId: string) => void;
 }) {
   const act = useShare((s) => s.act);
   const sendFocus = useShare((s) => s.sendFocus);
@@ -99,8 +104,9 @@ export default function Board({
   const submitAi = () => {
     const t = aiText.trim();
     if (!t) return;
-    myPrompts.push(t);
-    act({ type: 'ai', prompt: t });
+    const ref = uid();
+    myPrompts.set(ref, t);
+    act({ type: 'ai', prompt: t, ref });
     setAiText('');
   };
 
@@ -245,6 +251,7 @@ export default function Board({
                 me={me}
                 turnId={t.id}
                 queuePos={pending.findIndex((p) => p.id === t.id)}
+                onOpen={() => onAiOpen(t.id)}
               />
             ))
           ) : (
@@ -260,7 +267,7 @@ export default function Board({
                 ? '내 FabriX로 처리'
                 : `${hostShort}님 PC의 FabriX로 처리`}
           </span>
-          {room.aiTurns > 0 ? (
+          {room.order.length > 0 ? (
             <span
               role="button"
               tabIndex={0}
@@ -294,7 +301,7 @@ export default function Board({
               w={cw}
               roll={roll}
               lock={lock}
-              rank={room.aiTurns ? rank.get(r.id) : undefined}
+              rank={room.order.length ? rank.get(r.id) : undefined}
               onInfo={onInfo}
               onHover={() => sendFocus(r.id)}
             />
@@ -598,24 +605,9 @@ function Card({
   );
 }
 
-function AiChip({
-  room,
-  me,
-  turnId,
-  queuePos,
-}: {
-  room: RoomState;
-  me: string;
-  turnId: string;
-  queuePos: number;
-}) {
-  const t = room.ai.find((x) => x.id === turnId)!;
-  const m = memberOf(room, t.by);
+/** AI 큐 칩·팝업이 같이 쓰는 문구 */
+export function aiTurnText(t: AiTurn, queuePos: number) {
   const run = t.status === 'running';
-  const done = t.status === 'done';
-  const failed = t.status === 'failed';
-  const mine = room.ai.filter((x) => x.by === me);
-  const raw = t.by === me ? myPrompts[myPrompts.length - mine.length + mine.indexOf(t)] : undefined;
   const kw = t.keywords.length
     ? t.keywords.map((k) => `#${k}`).join(' ')
     : run || t.status === 'queued'
@@ -623,16 +615,53 @@ function AiChip({
       : '#조건 없음';
   const st = run
     ? '정렬 중…'
-    : done
+    : t.status === 'done'
       ? t.moved
         ? `✓ ${t.moved}곳 이동`
         : '변화 없음'
-      : failed
+      : t.status === 'failed'
         ? '못 했어요'
         : `대기 ${Math.max(1, queuePos)}`;
+  return { kw, st };
+}
+
+function AiChip({
+  room,
+  me,
+  turnId,
+  queuePos,
+  onOpen,
+}: {
+  room: RoomState;
+  me: string;
+  turnId: string;
+  queuePos: number;
+  onOpen: () => void;
+}) {
+  const t = room.ai.find((x) => x.id === turnId)!;
+  const m = memberOf(room, t.by);
+  const run = t.status === 'running';
+  const done = t.status === 'done';
+  const failed = t.status === 'failed';
+  const raw = t.by === me ? myPromptOf(t.ref) : undefined;
+  const { kw, st } = aiTurnText(t, queuePos);
   return (
     <div
-      title={[raw ? `내 원문(나만 보임): ${raw}` : '원문은 공개되지 않아요', t.note ?? '']
+      role="button"
+      tabIndex={0}
+      className="tg-ai-chip"
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      title={[
+        raw ? `내 원문(나만 보임): ${raw}` : '원문은 공개되지 않아요',
+        t.note ?? '',
+        done ? '눌러서 1~5위 보기 · 지우기' : '눌러서 자세히 보기 · 취소',
+      ]
         .filter(Boolean)
         .join('\n')}
       style={{
@@ -655,6 +684,7 @@ function AiChip({
         whiteSpace: 'nowrap',
         transition: 'box-shadow .3s',
         opacity: failed ? 0.6 : 1,
+        cursor: 'pointer',
       }}
     >
       <Avatar m={m} size={22} />

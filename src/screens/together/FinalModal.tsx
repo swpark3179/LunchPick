@@ -5,6 +5,7 @@
 import { useMemo } from 'react';
 
 import { copyText } from '../../lib/ipc';
+import { hhmm } from '../../lib/util';
 import { type RoomState, shortName } from '../../share/protocol';
 import { useShare } from '../../store/shareStore';
 import { toast } from '../../store/uiStore';
@@ -27,9 +28,7 @@ export default function FinalModal({
   const r = room.restaurants.find((x) => x.id === f.restId);
   const ppl = room.members.filter((m) => m.online);
   const hue = r ? (CH[r.category] ?? 300) : 300;
-  const at = new Date(f.at);
-  const atText = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
-  const byText = `${f.by === me ? '내가' : `${shortName(room.members.find((m) => m.id === f.by)?.name ?? '누군가')}님이`} ${atText}에 확정`;
+  const byText = `${f.by === me ? '내가' : `${shortName(room.members.find((m) => m.id === f.by)?.name ?? '누군가')}님이`} ${hhmm(f.at)}에 확정`;
 
   // 확정마다 새로 뿌리는 색종이 (시안: 90조각, lp-fall)
   const confetti = useMemo(

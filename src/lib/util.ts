@@ -94,3 +94,9 @@ export const todayText = () =>
 
 export const longDateText = () =>
   new Date().toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'long' });
+
+/** 시각을 '13:05' 처럼 */
+export const hhmm = (at: number) => {
+  const d = new Date(at);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};

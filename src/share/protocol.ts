@@ -13,7 +13,7 @@ import type { Menu, Restaurant } from '../lib/types';
 import { HUES } from '../theme';
 
 /** 호환되지 않게 바뀌면 올린다. 다르면 접속을 거절한다. */
-export const PROTOCOL = 1;
+export const PROTOCOL = 2;
 
 export const LIMITS = {
   name: 12,
@@ -22,11 +22,17 @@ export const LIMITS = {
   prompt: 200,
   aiPending: 6,
   aiKeep: 12,
+  /** AI 큐 팝업에 보여주는 순위 수 */
+  aiTop: 5,
   rollMax: 5,
   ladderMax: 8,
   memo: 200,
   menus: 40,
   menuName: 30,
+  /** 동기화로 한 사람이 보낼 수 있는 식당 수 */
+  syncRests: 500,
+  /** 지운 식당 기록을 몇 개까지 남길지 */
+  removedKeep: 50,
 } as const;
 
 export type Member = {
@@ -55,6 +61,12 @@ export type AiTurn = {
   moved?: number;
   /** AI 대신 키워드 정렬로 처리했거나 실패한 이유 */
   note?: string;
+  /** 반영됐을 때의 차수 ('n차') */
+  no?: number;
+  /** 이 요청의 앞쪽 몇 곳 (AI 큐 팝업용). 식당이 지워져도 보이게 이름을 함께 남긴다. */
+  top?: { id: string; name: string; why?: string }[];
+  /** 보낸 사람이 붙인 임의 id — 내 원문을 내 칩에 짝지을 때만 쓴다 */
+  ref?: string;
 };
 
 /**
@@ -90,6 +102,24 @@ export type LadderRun = {
 
 export type Final = { restId: string; by: string; at: number };
 
+/**
+ * 식당 정보 동기화 — 누구든 요청하면 모두에게 수락/거절을 묻는다. 방의 식당 목록은 호스트
+ * 목록이라 호스트가 수락해야 합쳐지고, 끝나면 수락한 사람들이 합쳐진 목록을 각자 받는다.
+ */
+export type SyncRun = {
+  id: string;
+  by: string;
+  at: number;
+  /** 응답 마감 (호스트 시계) */
+  until: number;
+  /** 멤버 id -> 수락(true) / 거절(false) */
+  answers: Record<string, boolean>;
+  end: { ok: boolean; added: number; reason?: string; at: number } | null;
+};
+
+/** 같이 고르기 중에 지운 식당 — 참여자들도 각자 목록에서 지운다 */
+export type Removed = { id: string; name: string; by: string; at: number };
+
 export type RoomState = {
   v: number;
   rev: number;
@@ -121,6 +151,8 @@ export type RoomState = {
   /** 같이 고르기 중에 정보를 고친 식당 (방금 수정됨 표시) */
   edited: Record<string, number>;
   chat: ChatMsg[];
+  sync: SyncRun | null;
+  removed: Removed[];
 };
 
 export type EditableRest = { id: string; phone: string; memo: string; menus: Menu[] };
@@ -132,8 +164,9 @@ export type Action =
   | { type: 'dislike'; restId: string }
   | { type: 'cand'; restId: string }
   | { type: 'roll'; count: number }
-  | { type: 'ai'; prompt: string }
+  | { type: 'ai'; prompt: string; ref?: string }
   | { type: 'aiReset' }
+  | { type: 'aiRemove'; id: string }
   | { type: 'ladder'; keep: number }
   | { type: 'ladderRun'; i: number }
   | { type: 'ladderAll' }
@@ -142,6 +175,10 @@ export type Action =
   | { type: 'final'; restId: string }
   | { type: 'unfinal' }
   | { type: 'editRest'; rest: EditableRest }
+  | { type: 'removeRest'; restId: string }
+  /** 참여자가 시작하면 자기 식당 목록을 함께 보낸다 */
+  | { type: 'syncStart'; restaurants?: Restaurant[] }
+  | { type: 'syncAnswer'; id: string; accept: boolean; restaurants?: Restaurant[] }
   | { type: 'profile'; name: string; hue: number };
 
 /** 참여자 → 호스트 */

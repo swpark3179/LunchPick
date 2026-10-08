@@ -6,20 +6,22 @@
  *   └─────────────────────────────────────────────────────────────────────┘
  * 사이드바는 접히고(Sidebar), 방은 아래에서 떠오른다(lp-rise).
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type { RoomState } from '../../share/protocol';
 import { shortName } from '../../share/protocol';
 import { useShare } from '../../store/shareStore';
 import { useUi } from '../../store/uiStore';
 import { AC, AINK, MUTED } from '../../theme';
+import AiTurnModal from './AiTurnModal';
 import Board from './Board';
 import ChatPanel from './ChatPanel';
 import DislikeColumn from './DislikeColumn';
 import FinalModal from './FinalModal';
 import InfoDrawer from './InfoDrawer';
 import LadderModal from './LadderModal';
-import { IconBack, IconCheck, StatusDot } from './parts';
+import { IconBack, IconCheck, IconSync, StatusDot } from './parts';
+import SyncBanner from './SyncBanner';
 import { useRollAnim } from './useRoomAnim';
 
 export default function TogetherScreen() {
@@ -39,9 +41,13 @@ function Room({ room }: { room: RoomState }) {
   const info = useShare((s) => s.info);
   const target = useShare((s) => s.target);
   const leave = useShare((s) => s.leave);
+  const startSync = useShare((s) => s.startSync);
   const setView = useUi((s) => s.setView);
 
   const [detail, setDetail] = useState<string | null>(null);
+  /** 열어 둔 AI 큐 팝업 (요청 id) — 각자 연다 */
+  const [aiOpen, setAiOpen] = useState<string | null>(null);
+  const closeAi = useCallback(() => setAiOpen(null), []);
   /** 닫은 확정 화면 (확정 시각으로 구분) — 각자 닫는다 */
   const [finSeen, setFinSeen] = useState<number | null>(null);
   const roll = useRollAnim(room.roll);
@@ -57,17 +63,28 @@ function Room({ room }: { room: RoomState }) {
       : '';
   const finOpen = !!room.final && finSeen !== room.final.at;
   const finalName = room.final ? room.restaurants.find((r) => r.id === room.final!.restId)?.name : '';
+  const sync = room.sync && !room.sync.end ? room.sync : null;
+  const syncAnswered = sync ? Object.keys(sync.answers).length : 0;
+  const syncTotal = sync
+    ? syncAnswered + room.members.filter((m) => m.online && sync.answers[m.id] === undefined).length
+    : 0;
 
-  // Esc: 확정 화면 → 식당 정보 순으로 닫는다 (사다리는 모두의 화면이라 ✕ 로만 닫는다).
+  // Esc: 확정 화면 → AI 큐 팝업 → 식당 정보 순으로 닫는다 (사다리는 모두의 화면이라 ✕ 로만 닫는다).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (finOpen && room.final) setFinSeen(room.final.at);
+      else if (aiOpen) setAiOpen(null);
       else if (detail) setDetail(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [finOpen, room.final, detail]);
+  }, [finOpen, room.final, aiOpen, detail]);
+
+  // 보던 식당이 지워지면 정보 드로어를 닫는다.
+  useEffect(() => {
+    if (detail && !room.restaurants.some((r) => r.id === detail)) setDetail(null);
+  }, [detail, room.restaurants]);
 
   // 확정되면 열려 있던 식당 정보는 닫는다.
   useEffect(() => {
@@ -180,6 +197,38 @@ function Room({ room }: { room: RoomState }) {
           ) : null}
           <button
             type="button"
+            className={sync ? '' : 'tg-soft'}
+            disabled={!!sync}
+            onClick={startSync}
+            title={
+              sync
+                ? `응답 ${syncAnswered}/${syncTotal} · 수락 ${Object.values(sync.answers).filter(Boolean).length} — 모두 답하거나 1분이 지나면 마무리해요`
+                : '참여자들과 식당 목록을 합쳐요 — 모두에게 수락/거절을 물어봐요'
+            }
+            style={{
+              height: 32,
+              padding: '0 12px',
+              border: '1px solid oklch(0.88 0.006 75)',
+              borderRadius: 8,
+              background: 'white',
+              color: 'oklch(0.42 0.012 60)',
+              font: 'inherit',
+              fontSize: 12.5,
+              fontWeight: 600,
+              cursor: sync ? 'default' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              opacity: sync ? 0.7 : 1,
+              whiteSpace: 'nowrap',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            <IconSync size={14} />
+            {sync ? `동기화 중 ${syncAnswered}/${syncTotal}` : '식당 동기화'}
+          </button>
+          <button
+            type="button"
             className="tg-soft"
             onClick={() => (host ? setView('settings') : leave())}
             style={{
@@ -202,14 +251,22 @@ function Room({ room }: { room: RoomState }) {
 
       {/* ------------------------------------------------ 본문 3열 */}
       <div
-        style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '236px minmax(0,1fr) 300px' }}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'grid',
+          gridTemplateColumns: '236px minmax(0,1fr) 300px',
+          position: 'relative',
+        }}
       >
         <DislikeColumn room={room} me={me} onInfo={setDetail} />
-        <Board room={room} me={me} roll={roll} onInfo={setDetail} />
+        <Board room={room} me={me} roll={roll} onInfo={setDetail} onAiOpen={setAiOpen} />
         <ChatPanel room={room} me={me} host={host} detail={detail} />
+        <SyncBanner room={room} me={me} host={host} />
       </div>
 
       <InfoDrawer room={room} id={detail} host={host} hostShort={hostShort} onClose={() => setDetail(null)} />
+      {aiOpen ? <AiTurnModal room={room} me={me} turnId={aiOpen} onClose={closeAi} /> : null}
       {room.ladder ? <LadderModal room={room} me={me} /> : null}
       {finOpen ? <FinalModal room={room} me={me} onClose={() => setFinSeen(room.final!.at)} /> : null}
     </div>

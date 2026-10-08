@@ -126,7 +126,21 @@ export type ImportSummary = {
   addedMenus: number;
 };
 
-const nameKey = (s: string) => s.trim().toLowerCase();
+/** 식당·메뉴를 이름으로 맞춰 볼 때의 키 */
+export const nameKey = (s: string) => s.trim().toLowerCase();
+
+/**
+ * 네트워크로 받은 식당 목록을 검증·정규화한다 (같이 고르기 동기화).
+ * 이상한 항목은 버리고, 개수와 메뉴 수는 상한에서 자른다.
+ */
+export function sanitizeRestaurants(raw: unknown, max: number, maxMenus: number): Restaurant[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(0, max)
+    .map(normalizeRestaurant)
+    .filter((r): r is Restaurant => r !== null)
+    .map((r) => ({ ...r, menus: r.menus.slice(0, maxMenus) }));
+}
 
 export function summarizeImport(incoming: Restaurant[], current: Restaurant[]): ImportSummary {
   const byName = new Map(current.map((r) => [nameKey(r.name), r]));
@@ -150,8 +164,13 @@ export function summarizeImport(incoming: Restaurant[], current: Restaurant[]): 
  * 합치기: 식당 이름 기준으로 매칭한다.
  * - 없는 식당은 추가 (id 충돌 시 재발급)
  * - 있는 식당은 **메뉴만** 이름 기준으로 추가하고, 기존 phone/memo/fav 는 보존한다
+ * - fillBlanks 면 있는 식당의 비어 있는 전화번호·메모만 채운다 (같이 고르기 동기화)
  */
-export function mergeRestaurants(current: Restaurant[], incoming: Restaurant[]): Restaurant[] {
+export function mergeRestaurants(
+  current: Restaurant[],
+  incoming: Restaurant[],
+  opts: { fillBlanks?: boolean } = {},
+): Restaurant[] {
   const takeId = idClaimer(current.flatMap((r) => [r.id, ...r.menus.map((m) => m.id)]));
 
   const out = current.map((r) => ({ ...r, menus: [...r.menus] }));
@@ -170,6 +189,10 @@ export function mergeRestaurants(current: Restaurant[], incoming: Restaurant[]):
       continue;
     }
     const mine = out[at];
+    if (opts.fillBlanks) {
+      if (!mine.phone && inc.phone) mine.phone = inc.phone;
+      if (!mine.memo && inc.memo) mine.memo = inc.memo;
+    }
     const have = new Set(mine.menus.map((m) => nameKey(m.name)));
     for (const m of inc.menus) {
       if (have.has(nameKey(m.name))) continue;

@@ -7,6 +7,7 @@
  * 사다리는 누구든 출발·결과 적용을 누를 때 진행한다.
  */
 import { ERR_NO_CREDS, fabrixChat, type ChatTurn } from '../lib/ipc';
+import { mergeRestaurants, sanitizeRestaurants } from '../lib/shareFormat';
 import type { Restaurant } from '../lib/types';
 import { fmtPhone, pick, shuffle, uid } from '../lib/util';
 import { useData } from '../store/dataStore';
@@ -42,9 +43,12 @@ import {
   type LadderRun,
   type Member,
   PROTOCOL,
+  type Removed,
   type RoomState,
+  type SyncRun,
   cleanName,
   hashHue,
+  josa,
   shortName,
 } from './protocol';
 import { type HostEvent, hostTransport } from './transport';
@@ -58,6 +62,8 @@ const TYPING_MS = 3500;
 /** AI 응답이 너무 빨리 와도 '정렬 중…' 이 잠깐은 보이게 한다 (시안: 2초) */
 const AI_MIN_SPIN_MS = 2000;
 const AI_HISTORY_TURNS = 6;
+/** 식당 정보 동기화에 답할 시간 — 지나면 답하지 않은 사람은 거절로 친다 */
+const SYNC_WAIT_MS = 60000;
 /** 1초에 이보다 많이 보내면 그 연결의 요청은 버린다 */
 const RATE_PER_SEC = 25;
 
@@ -137,6 +143,8 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     final: null,
     edited: {},
     chat: [{ id: uid(), at: now, kind: 'sys', text: `방이 열렸어요 · 식당 ${restaurants.length}곳 기준` }],
+    sync: null,
+    removed: [],
   };
   let focus: FocusMap = {};
 
@@ -145,10 +153,24 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
   const timers = new Set<ReturnType<typeof setTimeout>>();
   /** AI 에 보낸 원문. 방송하지 않는다. */
   const prompts = new Map<string, string>();
-  /** AI 와의 누적 대화 (user/assistant 쌍) */
-  let convo: ChatTurn[] = [];
-  /** 키워드 정렬로 대신 처리할 때 쓰는 요청별 개념 */
-  let conceptTurns: string[][] = [];
+  /**
+   * 반영된 AI 요청들 (반영된 순서). 요청 하나를 지우면 여기서 빠져 순서·대화 맥락·태그 강조에서
+   * 함께 사라진다. 칩이 오래돼 큐에서 밀려나도 기록은 남는다.
+   */
+  const applied = new Map<
+    string,
+    {
+      /** AI 와 주고받은 한 쌍 (user/assistant) */
+      msgs: ChatTurn[];
+      /** 요청에서 뽑은 개념 — 키워드 정렬로 대신할 때 누적해서 쓴다 */
+      concepts: string[];
+      /** 카드의 #태그 강조에 쓰는 태그 */
+      tags: string[];
+      /** 이 요청이 매긴 순서와 앞쪽 몇 곳의 이유 */
+      ids: string[];
+      why: Record<string, string>;
+    }
+  >();
   let aiEpoch = 0;
   let aiBusy = false;
   /** 최종 확정 때 남긴 먹은 기록 — 확정을 취소하면 지운다 */
@@ -465,7 +487,36 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
 
   // ------------------------------------------------------------ AI 정렬 (대기열)
 
-  const queueAi = (by: string, raw: string) => {
+  /** ids 를 앞에 세운 순서 — 나머지는 base(비어 있으면 식당 목록 순서)를 따른다. */
+  const stack = (s: RoomState, base: string[], ids: string[]) => {
+    const seen = new Set(ids);
+    return [...ids, ...(base.length ? base : s.restaurants.map((r) => r.id)).filter((id) => !seen.has(id))];
+  };
+
+  /** 순서를 바꾸고, 바뀌기 전후의 '남은 식당' 자리를 비교해 ▲▼ 와 이동 수를 만든다. */
+  const reorder = (s: RoomState, order: string[]) => {
+    const before = new Map(visible(s).map((r, i) => [r.id, i]));
+    const next = { ...s, order };
+    const map: Record<string, number> = {};
+    visible(next).forEach((r, i) => {
+      const d = (before.get(r.id) ?? i) - i;
+      if (d) map[r.id] = d;
+    });
+    return { next, map, moved: Object.keys(map).length };
+  };
+
+  /** ▲▼ 표시 — 잠시 보였다가 지운다. */
+  const flashDelta = (map: Record<string, number>) => {
+    const id = uid();
+    later(() => {
+      if (state.delta?.id === id) update((s) => ({ ...s, delta: null }));
+    }, DELTA_HOLD_MS);
+    return { id, map };
+  };
+
+  const kwText = (keywords: string[]) => keywords.map((k) => `#${k}`).join(' ');
+
+  const queueAi = (by: string, raw: string, ref: unknown) => {
     const prompt = String(raw ?? '')
       .trim()
       .slice(0, LIMITS.prompt);
@@ -481,6 +532,7 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
       keywords: conceptsOf(prompt).slice(0, 3),
       status: 'queued',
       at: Date.now(),
+      ref: typeof ref === 'string' ? ref.slice(0, 24) : undefined,
     };
     prompts.set(turn.id, prompt);
     update((s) => {
@@ -508,26 +560,27 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     const prompt = prompts.get(turn.id) ?? '';
     const list = visible(state);
     const { history } = useData.getState();
+    const past = [...applied.values()];
     const askedConcepts = conceptsOf(prompt);
     let ids: string[] = [];
     let why: Record<string, string> = {};
     let keywords: string[] = [];
     let note = '';
     let failed = false;
-    // 대화·개념 누적은 결과를 실제로 반영할 때만 한다 (그사이 초기화됐을 수 있다).
+    // 대화·개념 누적은 결과를 실제로 반영할 때만 한다 (그사이 초기화했거나 지웠을 수 있다).
     let learned: ChatTurn[] = [];
 
     if (!list.length) {
       failed = true;
       note = '남은 식당이 없어 정렬하지 못했어요.';
     } else {
-      const turnNo = convo.filter((m) => m.role === 'user').length + 1;
+      const turnNo = past.length + 1;
       const userMsg = turnPrompt(listText(list, history), prompt, turnNo);
       try {
         if (!state.aiReady) throw new Error(ERR_NO_CREDS);
         const text = await fabrixChat(useSettings.getState().fabrix, [
           { role: 'system', content: AI_SYSTEM },
-          ...convo.slice(-AI_HISTORY_TURNS * 2),
+          ...past.slice(-AI_HISTORY_TURNS).flatMap((h) => h.msgs),
           { role: 'user', content: userMsg },
         ]);
         const parsed = parseRanked(text, list.length);
@@ -541,7 +594,7 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
         ];
       } catch (e) {
         // AI 가 없거나 실패해도 흐름은 이어간다 — 누적 키워드로 정렬한다.
-        const fb = fallbackRank(list, history, [...conceptTurns, askedConcepts]);
+        const fb = fallbackRank(list, history, [...past.map((h) => h.concepts), askedConcepts]);
         ids = fb.ids;
         why = fb.why;
         keywords = askedConcepts.length ? askedConcepts.slice(0, 3) : localKeywords(prompt);
@@ -568,70 +621,103 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     aiBusy = false;
     prompts.delete(turn.id);
     if (disposed) return;
-    // 그사이 정렬을 초기화했다면 이 결과는 버린다.
-    if (myEpoch !== aiEpoch) {
+    // 그사이 정렬을 초기화했거나 이 요청을 지웠다면 결과는 버린다.
+    if (myEpoch !== aiEpoch || !state.ai.some((t) => t.id === turn.id)) {
       void pumpAi();
       return;
     }
-    convo.push(...learned);
-    conceptTurns = [...conceptTurns, askedConcepts];
 
-    const deltaId = uid();
+    if (failed) {
+      update((s) => ({
+        ...s,
+        ai: s.ai.map((t) => (t.id === turn.id ? { ...t, status: 'failed' as const, keywords, note } : t)),
+      }));
+      void pumpAi();
+      return;
+    }
+
+    const tags = tagsOfConcepts([...askedConcepts, ...conceptsOf(keywords.join(' '))]);
+    applied.set(turn.id, { msgs: learned, concepts: askedConcepts, tags, ids, why });
     update((s) => {
-      if (failed) {
-        return {
-          ...s,
-          ai: s.ai.map((t) => (t.id === turn.id ? { ...t, status: 'failed' as const, keywords, note } : t)),
-        };
-      }
-      // 바뀌기 전후의 '남은 식당' 자리를 비교해 ▲▼ 와 이동 수를 만든다.
-      const before = new Map(visible(s).map((r, i) => [r.id, i]));
-      const seen = new Set(ids);
-      const order = [
-        ...ids,
-        ...(s.order.length ? s.order : s.restaurants.map((r) => r.id)).filter((id) => !seen.has(id)),
-      ];
-      const next = { ...s, order };
-      const map: Record<string, number> = {};
-      visible(next).forEach((r, i) => {
-        const d = (before.get(r.id) ?? i) - i;
-        if (d) map[r.id] = d;
-      });
-      const moved = Object.keys(map).length;
-      const turnNo = s.aiTurns + 1;
-      const tags = [
-        ...new Set([...s.aiTags, ...tagsOfConcepts([...askedConcepts, ...conceptsOf(keywords.join(' '))])]),
-      ];
-      const kw = keywords.map((k) => `#${k}`).join(' ');
+      const { next, map, moved } = reorder(s, stack(s, s.order, ids));
+      const no = s.aiTurns + 1;
+      const top = ids.slice(0, LIMITS.aiTop).map((id) => ({
+        id,
+        name: s.restaurants.find((r) => r.id === id)?.name ?? '',
+        why: why[id],
+      }));
       return withSys(
         {
           ...next,
           reasons: why,
-          aiTags: tags,
-          aiTurns: turnNo,
-          delta: { id: deltaId, map },
+          aiTags: [...new Set([...s.aiTags, ...tags])],
+          aiTurns: no,
+          delta: flashDelta(map),
           ai: s.ai.map((t) =>
             t.id === turn.id
-              ? { ...t, status: 'done' as const, keywords, moved, note: note || undefined }
+              ? { ...t, status: 'done' as const, keywords, moved, no, top, note: note || undefined }
               : t,
           ),
         },
-        `AI 정렬 ${turnNo}차 · ${nm(turn.by)}님 ${kw || '#요청'} → ${moved}곳 순서 변경`,
+        `AI 정렬 ${no}차 · ${nm(turn.by)}님 ${kwText(keywords) || '#요청'} → ${moved}곳 순서 변경`,
         turn.by,
       );
     });
-    later(() => {
-      if (state.delta?.id === deltaId) update((s) => ({ ...s, delta: null }));
-    }, DELTA_HOLD_MS);
     void pumpAi();
+  };
+
+  /**
+   * AI 요청 하나를 지운다. 대기·정렬 중이면 취소하고, 반영된 요청이면 남은 요청들로 순서를
+   * 다시 쌓는다 — 마지막 요청을 지우면 그 직전 순서로 돌아가고, 다음 정렬의 맥락에서도 빠진다.
+   */
+  const removeAi = (by: string, id: string) => {
+    const t = state.ai.find((x) => x.id === id);
+    if (!t) return;
+    const kw = t.keywords.length ? ` ${kwText(t.keywords)}` : '';
+    if (t.status === 'queued' || t.status === 'running') {
+      // 정렬 중이던 요청은 응답이 와도 pumpAi 가 버린다.
+      prompts.delete(t.id);
+      update((s) =>
+        withSys(
+          { ...s, ai: s.ai.filter((x) => x.id !== t.id) },
+          `${nm(by)}님이 ${josa(`AI 요청${kw}`, '을', '를')} 취소했어요`,
+          by,
+        ),
+      );
+      return;
+    }
+    const had = applied.delete(t.id);
+    if (!had) {
+      update((s) => ({ ...s, ai: s.ai.filter((x) => x.id !== t.id) }));
+      return;
+    }
+    update((s) => {
+      const left = [...applied.values()];
+      const live = new Set(s.restaurants.map((r) => r.id));
+      const order = left.reduce<string[]>((o, h) => stack(s, o, h.ids), []).filter((x) => live.has(x));
+      const ai = s.ai.filter((x) => x.id !== t.id);
+      const { next, map, moved } = reorder(s, order);
+      return withSys(
+        {
+          ...next,
+          reasons: left.length ? left[left.length - 1].why : {},
+          aiTags: [...new Set(left.flatMap((h) => h.tags))],
+          // 남은 게 하나도 없으면 차수도 처음부터 센다.
+          aiTurns: left.length || ai.length ? s.aiTurns : 0,
+          delta: moved ? flashDelta(map) : s.delta,
+          ai,
+        },
+        `${nm(by)}님이 ${josa(`AI 정렬 ${t.no ?? ''}차${kw}`, '을', '를')} 지웠어요 → ${moved}곳 순서 변경`,
+        by,
+      );
+    });
   };
 
   const resetAi = (by: string) => {
     if (state.ai.some((t) => t.status === 'queued' || t.status === 'running'))
       return reject(by, '처리 중인 요청이 끝나면 초기화할 수 있어요.');
     aiEpoch += 1;
-    convo = [];
-    conceptTurns = [];
+    applied.clear();
     prompts.clear();
     update((s) =>
       withSys(
@@ -714,6 +800,117 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     );
   };
 
+  // ------------------------------------------------------------ 식당 지우기
+
+  const removeRest = (by: string, id: string) => {
+    const r = restOf(id);
+    if (!r) return;
+    if (state.final?.restId === id) return reject(by, '확정된 식당이에요. 확정을 푼 뒤에 지울 수 있어요.');
+    if (rolling()) return reject(by, '무작위로 뽑는 중이에요. 끝나면 다시 해 주세요.');
+    if (state.ladder?.cands.includes(id))
+      return reject(by, '사다리에 올라간 식당이에요. 사다리를 닫은 뒤에 지워 주세요.');
+    // 데이터 구독이 방 상태(가기 싫은 곳·후보·순서 …)를 정리해 방송한다.
+    useData.getState().apply((d) => ({ ...d, restaurants: d.restaurants.filter((x) => x.id !== id) }));
+    // 참여자들은 이 기록을 보고 각자 목록에서도 지운다 (shareStore).
+    const entry: Removed = { id, name: r.name, by, at: Date.now() };
+    update((s) =>
+      withSys(
+        { ...s, removed: [...s.removed, entry].slice(-LIMITS.removedKeep) },
+        `${nm(by)}님이 ‘${r.name}’ 식당을 지웠어요 · 모두의 목록에서 빠져요`,
+        by,
+      ),
+    );
+  };
+
+  // ------------------------------------------------------------ 식당 정보 동기화
+
+  /** 수락한 참여자들이 보낸 목록 — 호스트가 수락하면 호스트 목록(=방 목록)에 합친다 */
+  const syncOffers = new Map<string, Restaurant[]>();
+  let syncAdded = 0;
+
+  const syncOpen = () => !!state.sync && !state.sync.end;
+  const hostAccepted = () => state.sync?.answers[hostId] === true;
+  const cleanList = (raw: unknown) => sanitizeRestaurants(raw, LIMITS.syncRests, LIMITS.menus);
+
+  /** 쌓인 목록을 호스트 목록에 합친다. 방 목록은 데이터 구독이 고쳐 방송한다. */
+  const mergeOffers = () => {
+    if (!syncOffers.size) return;
+    const lists = [...syncOffers.values()];
+    syncOffers.clear();
+    const before = useData.getState().restaurants.length;
+    useData.getState().apply((d) => ({
+      ...d,
+      restaurants: lists.reduce((acc, l) => mergeRestaurants(acc, l, { fillBlanks: true }), d.restaurants),
+    }));
+    syncAdded += useData.getState().restaurants.length - before;
+  };
+
+  /** 끝낸다. 성공이면 수락한 참여자들이 end 를 보고 합쳐진 방 목록을 각자 받는다. */
+  const endSync = (ok: boolean, reason?: string) => {
+    const run = state.sync;
+    if (!run || run.end) return;
+    if (ok) mergeOffers();
+    syncOffers.clear();
+    const n = Object.values(run.answers).filter(Boolean).length;
+    update((s) =>
+      s.sync?.id === run.id
+        ? withSys(
+            { ...s, sync: { ...s.sync, end: { ok, added: ok ? syncAdded : 0, reason, at: Date.now() } } },
+            ok
+              ? `식당 동기화를 마쳤어요 · ${n}명 · 식당 ${syncAdded}곳 추가`
+              : `식당 동기화를 취소했어요 · ${reason ?? ''}`,
+          )
+        : s,
+    );
+  };
+
+  /** 접속 중인 사람이 모두 답했으면 마무리한다. */
+  const checkSync = () => {
+    const run = state.sync;
+    if (!run || run.end) return;
+    if (state.members.some((m) => m.online && run.answers[m.id] === undefined)) return;
+    if (hostAccepted()) endSync(true);
+    else endSync(false, '호스트가 수락하지 않았어요');
+  };
+
+  const startSync = (by: string, raw: unknown) => {
+    if (syncOpen()) return reject(by, '이미 식당 정보를 동기화하는 중이에요.');
+    if (!state.members.some((m) => m.online && m.id !== by))
+      return reject(by, '같이 동기화할 사람이 아직 없어요.');
+    syncOffers.clear();
+    syncAdded = 0;
+    if (by !== hostId) syncOffers.set(by, cleanList(raw));
+    const at = Date.now();
+    const run: SyncRun = { id: uid(), by, at, until: at + SYNC_WAIT_MS, answers: { [by]: true }, end: null };
+    update((s) =>
+      withSys(
+        { ...s, sync: run },
+        `${nm(by)}님이 식당 정보 동기화를 요청했어요 · 수락한 사람끼리 목록을 합쳐요`,
+        by,
+      ),
+    );
+    later(() => {
+      if (state.sync?.id !== run.id || state.sync.end) return;
+      // 마감 — 답하지 않은 사람은 거절로 친다.
+      if (hostAccepted()) endSync(true);
+      else endSync(false, '호스트가 응답하지 않았어요');
+    }, SYNC_WAIT_MS);
+  };
+
+  const answerSync = (by: string, id: string, accept: boolean, raw: unknown) => {
+    const run = state.sync;
+    if (!run || run.end || run.id !== id || run.answers[by] !== undefined) return;
+    if (accept && by !== hostId) syncOffers.set(by, cleanList(raw));
+    update((s) =>
+      s.sync?.id === run.id ? { ...s, sync: { ...s.sync, answers: { ...s.sync.answers, [by]: accept } } } : s,
+    );
+    // 방 목록은 호스트 목록이라, 호스트가 거절하면 아무것도 합칠 수 없다.
+    if (by === hostId && !accept) return endSync(false, '호스트가 거절했어요');
+    // 호스트가 수락한 뒤로는 들어오는 대로 바로 합친다 — 방 목록이 실시간으로 늘어난다.
+    if (hostAccepted()) mergeOffers();
+    checkSync();
+  };
+
   // ------------------------------------------------------------ Action
 
   const act = (by: string, a: Action) => {
@@ -757,10 +954,13 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
         startRoll(by, Number(a.count));
         return;
       case 'ai':
-        queueAi(by, a.prompt);
+        queueAi(by, a.prompt, a.ref);
         return;
       case 'aiReset':
         resetAi(by);
+        return;
+      case 'aiRemove':
+        removeAi(by, String(a.id));
         return;
       case 'ladder':
         openLadder(by, Number(a.keep));
@@ -788,6 +988,15 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
       case 'editRest':
         editRest(by, a.rest);
         return;
+      case 'removeRest':
+        removeRest(by, String(a.restId));
+        return;
+      case 'syncStart':
+        startSync(by, a.restaurants);
+        return;
+      case 'syncAnswer':
+        answerSync(by, String(a.id), a.accept === true, a.restaurants);
+        return;
       case 'profile': {
         const name = cleanName(a.name);
         if (!name) return;
@@ -811,6 +1020,8 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     clearTimeout(typingTimers.get(id));
     setFocus(id, null);
     update((s) => withSys(patchMember(s, id, { online: false, typing: false }), `${nm(id)}님이 나갔어요`));
+    // 나간 사람만 답을 안 했다면 동기화를 마무리한다.
+    checkSync();
   };
 
   const hello = (c: Conn, m: Extract<C2H, { t: 'hello' }>) => {
@@ -939,6 +1150,7 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
         `${name}님을 내보냈어요`,
       );
     });
+    checkSync();
   };
 
   const dispose = (reason: string) => {

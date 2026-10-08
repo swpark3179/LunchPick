@@ -1,6 +1,7 @@
 /**
  * 식당 상세 (시안: 식당 상세 (나만 보기)) — 내 화면에서만 열린다.
  * 틀린 정보는 여기서 고치고, 저장하면 호스트의 식당 목록에 반영돼 모두에게 알려진다.
+ * '삭제' 는 방에 있는 모두의 식당 목록에서 그 식당을 지운다.
  */
 import { useEffect, useRef, useState } from 'react';
 
@@ -10,7 +11,7 @@ import { fmtPhone, uid } from '../../lib/util';
 import { LIMITS, type RoomState } from '../../share/protocol';
 import { useShare } from '../../store/shareStore';
 import { toast } from '../../store/uiStore';
-import { AC, AINK, CH, INK } from '../../theme';
+import { AC, AINK, CH, DANGER, DANGER_STRONG, INK } from '../../theme';
 import { IconEyeOff, IconPhone, IconX, INPUT_BORDER } from './parts';
 
 type MenuDraft = { id: string; name: string; price: string; fav: boolean };
@@ -47,6 +48,7 @@ export default function InfoDrawer({
 }) {
   const act = useShare((s) => s.act);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [confirmDel, setConfirmDel] = useState(false);
 
   // 닫히는 동안 내용이 사라지지 않도록 마지막 식당을 붙잡아 둔다 (시안의 dLast).
   const lastRef = useRef<Restaurant | null>(null);
@@ -55,7 +57,10 @@ export default function InfoDrawer({
   const r = live ?? lastRef.current;
   const open = !!live;
 
-  useEffect(() => setDraft(null), [id]);
+  useEffect(() => {
+    setDraft(null);
+    setConfirmDel(false);
+  }, [id]);
 
   if (!r) return null;
   const hue = CH[r.category] ?? 300;
@@ -501,10 +506,53 @@ export default function InfoDrawer({
             borderTop: '1px solid oklch(0.93 0.005 75)',
           }}
         >
-          {!draft ? (
+          {!draft && confirmDel ? (
+            <>
+              <span
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  alignSelf: 'center',
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  color: DANGER,
+                  lineHeight: 1.4,
+                }}
+              >
+                방에 있는 모두의 식당 목록에서 지워져요
+              </span>
+              <button
+                type="button"
+                className="tg-soft"
+                onClick={() => setConfirmDel(false)}
+                style={footBtn(false)}
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  // 지워지면 드로어는 저절로 닫힌다 (거절되면 이유가 토스트로 온다).
+                  setConfirmDel(false);
+                  act({ type: 'removeRest', restId: r.id });
+                }}
+                style={{ ...footBtn(false), border: 'none', background: DANGER_STRONG, color: 'white' }}
+              >
+                삭제
+              </button>
+            </>
+          ) : !draft ? (
             <>
               <button type="button" className="tg-soft" onClick={startEdit} style={footBtn(false)}>
                 정보 수정
+              </button>
+              <button
+                type="button"
+                className="tg-soft"
+                onClick={() => setConfirmDel(true)}
+                style={{ ...footBtn(false), padding: '0 14px', color: DANGER }}
+              >
+                삭제
               </button>
               <button
                 type="button"

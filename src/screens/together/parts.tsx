@@ -223,6 +223,15 @@ export const IconServer = ({ size = 20, style }: IconProps) => (
     <path d="M8 7.5h.01M8 16.5h.01" />
   </Svg>
 );
+/** 식당 정보 동기화 — 맞물려 도는 두 화살표 */
+export const IconSync = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M19.5 10.5A7.5 7.5 0 0 0 6.2 7.2L4.5 9" />
+    <path d="M4.5 4.5V9H9" />
+    <path d="M4.5 13.5a7.5 7.5 0 0 0 13.3 3.3l1.7-1.8" />
+    <path d="M19.5 19.5V15H15" />
+  </Svg>
+);
 /** 다른 사람이 보고 있는 카드에 붙는 이름표의 화살표 */
 export const IconCursor = ({ size = 10, style }: IconProps) => (
   <Svg size={size} fill="currentColor" style={style}>
