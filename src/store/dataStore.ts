@@ -17,6 +17,8 @@ type DataState = AppData & {
   /** 최종 1곳이 확정되면 먹은 기록을 남긴다. */
   recordEaten: (restId: string) => void;
   reset: () => void;
+  /** 식당과 먹은 기록을 모두 지운다 (샘플 데이터도 남기지 않는다). */
+  clear: () => void;
 };
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -68,4 +70,6 @@ export const useData = create<DataState>((set, get) => ({
     get().apply((d) => ({ ...d, history: [...d.history, { restId, at: Date.now() }] })),
 
   reset: () => get().apply(() => seed()),
+
+  clear: () => get().apply(() => ({ restaurants: [], history: [] })),
 }));

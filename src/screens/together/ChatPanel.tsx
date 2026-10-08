@@ -4,12 +4,44 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { LIMITS, type RoomState, shortName } from '../../share/protocol';
+import { hhmm } from '../../lib/util';
+import { type ChatMsg, LIMITS, type RoomState, shortName } from '../../share/protocol';
 import { useShare } from '../../store/shareStore';
-import { AC, INK } from '../../theme';
+import { AC, INK, MUTED_3 } from '../../theme';
 import { Avatar, IconSend, INPUT_BORDER, memberOf } from './parts';
 
 const TYPING_SEND_MS = 2000;
+
+const MINUTE = 60000;
+
+/** 같은 사람이 같은 분에 이어 보낸 말풍선 묶음의 마지막에만 시각을 단다. */
+const showTime = (m: ChatMsg, next: ChatMsg | undefined) =>
+  m.kind === 'chat' &&
+  !(
+    next?.kind === 'chat' &&
+    next.from === m.from &&
+    Math.floor(next.at / MINUTE) === Math.floor(m.at / MINUTE)
+  );
+
+/** 말풍선 옆의 작은 시각 */
+function Time({ at }: { at: number }) {
+  return (
+    <span
+      style={{
+        alignSelf: 'flex-end',
+        flex: 'none',
+        fontSize: 10.5,
+        lineHeight: 1.2,
+        color: MUTED_3,
+        fontVariantNumeric: 'tabular-nums',
+        whiteSpace: 'nowrap',
+        paddingBottom: 1,
+      }}
+    >
+      {hhmm(at)}
+    </span>
+  );
+}
 
 export default function ChatPanel({
   room,
@@ -201,9 +233,10 @@ export default function ChatPanel({
           flexDirection: 'column',
         }}
       >
-        {room.chat.map((m) => {
+        {room.chat.map((m, i) => {
           const p = prev;
           prev = m;
+          const time = showTime(m, room.chat[i + 1]) ? <Time at={m.at} /> : null;
           const sys = m.kind === 'sys';
           const same = !sys && p !== null && p.kind === 'chat' && m.kind === 'chat' && p.from === m.from;
           const gap = p ? (same ? 4 : 10) : 0;
@@ -234,8 +267,10 @@ export default function ChatPanel({
                   animation: 'lp-in .3s ease-out both',
                   display: 'flex',
                   justifyContent: 'flex-end',
+                  gap: 5,
                 }}
               >
+                {time}
                 <span
                   style={{
                     fontSize: 13,
@@ -245,6 +280,7 @@ export default function ChatPanel({
                     padding: '7px 11px',
                     borderRadius: '12px 4px 12px 12px',
                     maxWidth: '80%',
+                    minWidth: 0,
                     overflowWrap: 'anywhere',
                     userSelect: 'text',
                   }}
@@ -265,25 +301,38 @@ export default function ChatPanel({
               }}
             >
               <Avatar m={who} size={24} style={{ visibility: same ? 'hidden' : 'visible' }} />
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, maxWidth: '80%' }}>
+              {/* 시각이 옆에 붙어도 말풍선 폭은 예전(80%)만큼 쓴다 */}
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 3,
+                  minWidth: 0,
+                  maxWidth: 'calc(80% + 34px)',
+                }}
+              >
                 {same ? null : (
                   <span style={{ fontSize: 11, fontWeight: 650, color: 'oklch(0.42 0.012 60)' }}>
                     {shortName(who?.name ?? '나간 사람')}
                   </span>
                 )}
-                <span
-                  style={{
-                    fontSize: 13,
-                    lineHeight: 1.45,
-                    background: 'oklch(0.955 0.005 75)',
-                    padding: '7px 11px',
-                    borderRadius: '4px 12px 12px 12px',
-                    overflowWrap: 'anywhere',
-                    userSelect: 'text',
-                  }}
-                >
-                  {m.text}
-                </span>
+                <div style={{ display: 'flex', gap: 5, minWidth: 0 }}>
+                  <span
+                    style={{
+                      fontSize: 13,
+                      lineHeight: 1.45,
+                      background: 'oklch(0.955 0.005 75)',
+                      padding: '7px 11px',
+                      borderRadius: '4px 12px 12px 12px',
+                      minWidth: 0,
+                      overflowWrap: 'anywhere',
+                      userSelect: 'text',
+                    }}
+                  >
+                    {m.text}
+                  </span>
+                  {time}
+                </div>
               </div>
             </div>
           );

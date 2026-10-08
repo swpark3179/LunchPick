@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import Seg from '../components/Seg';
 import Toggle from '../components/Toggle';
@@ -105,6 +105,7 @@ export default function SettingsScreen() {
   const restaurants = useData((s) => s.restaurants);
   const apply = useData((s) => s.apply);
   const reset = useData((s) => s.reset);
+  const clear = useData((s) => s.clear);
   const s = useSettings();
 
   const [dir, setDir] = useState('');
@@ -115,7 +116,8 @@ export default function SettingsScreen() {
   const [testMsg, setTestMsg] = useState('');
   const [testOk, setTestOk] = useState(false);
   const [loadingModels, setLoadingModels] = useState(false);
-  const [confirmReset, setConfirmReset] = useState(false);
+  /** 두 번 눌러야 하는 버튼 중 한 번 누른 것 */
+  const [confirm, setConfirm] = useState<'seed' | 'clear' | null>(null);
   const [pending, setPending] = useState<{
     restaurants: Restaurant[];
     summary: ImportSummary;
@@ -244,16 +246,31 @@ export default function SettingsScreen() {
     toast(`식당 목록을 ${next.length}곳으로 교체했어요`);
   };
 
-  const onReset = () => {
-    if (!confirmReset) {
-      setConfirmReset(true);
-      setTimeout(() => setConfirmReset(false), 3000);
+  /** 한 번 누르면 3초 동안 확인을 기다리고, 그 안에 한 번 더 누르면 실행한다. */
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(confirmTimer.current), []);
+  const twice = (what: 'seed' | 'clear', run: () => void) => {
+    clearTimeout(confirmTimer.current);
+    if (confirm !== what) {
+      setConfirm(what);
+      confirmTimer.current = setTimeout(() => setConfirm(null), 3000);
       return;
     }
-    reset();
-    setConfirmReset(false);
-    toast('초기화했어요');
+    setConfirm(null);
+    run();
   };
+
+  const onReset = () =>
+    twice('seed', () => {
+      reset();
+      toast('초기화했어요');
+    });
+
+  const onClear = () =>
+    twice('clear', () => {
+      clear();
+      toast('식당 목록을 비웠어요');
+    });
 
   return (
     <div style={{ flex: 1, minWidth: 0, overflow: 'auto', position: 'relative' }}>
@@ -514,9 +531,21 @@ export default function SettingsScreen() {
             >
               샘플 데이터로 초기화
             </button>
-            {confirmReset ? (
+            <button
+              type="button"
+              className="btn-soft"
+              onClick={onClear}
+              style={{ ...btnSoft, color: DANGER, fontWeight: 500 }}
+            >
+              식당 목록 모두 지우기
+            </button>
+            {confirm === 'seed' ? (
               <span style={{ fontSize: 12.5, color: DANGER, fontWeight: 600 }}>
                 한 번 더 누르면 지금 목록이 샘플 데이터로 바뀝니다.
+              </span>
+            ) : confirm === 'clear' ? (
+              <span style={{ fontSize: 12.5, color: DANGER, fontWeight: 600 }}>
+                한 번 더 누르면 식당 {restaurants.length}곳과 먹은 기록이 모두 지워집니다 (샘플 데이터 포함).
               </span>
             ) : null}
           </div>

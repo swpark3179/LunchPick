@@ -202,6 +202,9 @@
 .tg-act:hover {
   background: oklch(0.95 0.005 75) !important;
 }
+.tg-ai-chip:hover {
+  box-shadow: inset 0 0 0 1px oklch(0.8 0.08 50) !important;
+}
 .tg-dashed:hover {
   background: oklch(0.975 0.004 75) !important;
 }

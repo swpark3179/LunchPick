@@ -8,11 +8,21 @@
  */
 import { create } from 'zustand';
 
+import { mergeRestaurants, nameKey } from '../lib/shareFormat';
 import type { RecentHost } from '../lib/types';
 import { joinRoom, type ClientConn } from '../share/client';
 import { createHostRoom, type HostRoom } from '../share/host';
-import { type Action, cleanName, type FocusMap, hashHue, type RoomState, shortName } from '../share/protocol';
+import {
+  type Action,
+  cleanName,
+  type FocusMap,
+  hashHue,
+  type Removed,
+  type RoomState,
+  shortName,
+} from '../share/protocol';
 import { clientTransport, type HostInfo, hostTransport } from '../share/transport';
+import { useData } from './dataStore';
 import { useSettings } from './settingsStore';
 import { toast, useUi } from './uiStore';
 
@@ -60,6 +70,10 @@ type ShareStore = {
   /** 내가 보고 있는 카드 — 다른 사람 화면에 이름표로 보인다 */
   sendFocus: (restId: string | null) => void;
   kick: (memberId: string) => void;
+  /** 식당 정보 동기화를 요청한다 — 참여자면 내 식당 목록을 함께 보낸다 */
+  startSync: () => void;
+  /** 지금 열린 동기화 요청에 답한다 */
+  answerSync: (accept: boolean) => void;
   enterRoom: () => void;
   dismissEnded: () => void;
   clearError: () => void;
@@ -83,6 +97,85 @@ const atLeast = async (since: number, ms: number) => {
 };
 
 const inRoom = () => useUi.getState().view === 'together';
+
+// ---------------------------------------------------------------- 방에서 일어난 일을 내 목록에 반영
+
+/** 이번 세션(서버 켜기·접속 한 번)에서 이미 처리한 것들 — 재접속해도 이어진다 */
+let effectsReady = false;
+const seenRemoved = new Set<string>();
+const seenAsk = new Set<string>();
+const seenSyncEnd = new Set<string>();
+
+const resetEffects = () => {
+  effectsReady = false;
+  seenRemoved.clear();
+  seenAsk.clear();
+  seenSyncEnd.clear();
+};
+
+const removedKey = (r: Removed) => `${r.id}:${r.at}`;
+
+/**
+ * 방 상태가 올 때마다: 동기화 요청 알림, 그리고 참여자라면 지운 식당·끝난 동기화를 내 식당
+ * 목록에 반영한다 (호스트는 방 목록이 곧 내 목록이라 따로 할 게 없다).
+ */
+function roomEffects(room: RoomState, me: string, role: ShareRole) {
+  if (!effectsReady) {
+    // 들어오기 전에 있던 일은 적용하지 않는다 — 처음 받은 상태는 본 것으로만 표시한다.
+    effectsReady = true;
+    room.removed.forEach((r) => seenRemoved.add(removedKey(r)));
+    if (room.sync) {
+      seenAsk.add(room.sync.id);
+      if (room.sync.end) seenSyncEnd.add(room.sync.id);
+    }
+    return;
+  }
+
+  const run = room.sync;
+  if (run && !run.end && !seenAsk.has(run.id)) {
+    seenAsk.add(run.id);
+    if (run.by !== me && !inRoom()) {
+      const who = shortName(room.members.find((m) => m.id === run.by)?.name ?? '누군가');
+      toast(`${who}님이 식당 정보 동기화를 요청했어요 · 같이 고르기에서 답해 주세요`);
+    }
+  }
+  if (role !== 'client') return;
+
+  const fresh = room.removed.filter((r) => !seenRemoved.has(removedKey(r)));
+  if (fresh.length) {
+    fresh.forEach((r) => seenRemoved.add(removedKey(r)));
+    // 내 목록의 id 는 호스트와 다를 수 있어서 이름으로도 맞춰 본다.
+    const ids = new Set(fresh.map((r) => r.id));
+    const names = new Set(fresh.map((r) => nameKey(r.name)));
+    const drop = useData.getState().restaurants.filter((x) => ids.has(x.id) || names.has(nameKey(x.name)));
+    if (drop.length) {
+      const gone = new Set(drop.map((x) => x.id));
+      useData.getState().apply((d) => ({ ...d, restaurants: d.restaurants.filter((x) => !gone.has(x.id)) }));
+      toast(
+        drop.length === 1
+          ? `‘${drop[0].name}’ 식당을 내 목록에서도 지웠어요`
+          : `식당 ${drop.length}곳을 내 목록에서도 지웠어요`,
+      );
+    }
+  }
+
+  if (run?.end && !seenSyncEnd.has(run.id)) {
+    seenSyncEnd.add(run.id);
+    if (run.end.ok && run.answers[me] === true) {
+      const before = useData.getState().restaurants.length;
+      useData.getState().apply((d) => ({
+        ...d,
+        restaurants: mergeRestaurants(d.restaurants, room.restaurants, { fillBlanks: true }),
+      }));
+      const added = useData.getState().restaurants.length - before;
+      toast(
+        added
+          ? `식당 목록을 동기화했어요 · ${added}곳 추가`
+          : '식당 목록을 동기화했어요 · 새로 더할 식당은 없었어요',
+      );
+    }
+  }
+}
 
 const unreadOf = (room: RoomState, me: string) => {
   const i = room.chat.findIndex((m) => m.id === lastSeenChat);
@@ -125,6 +218,7 @@ export const useShare = create<ShareStore>((set, get) => {
   const setRoom = (room: RoomState, myId: string) => {
     if (inRoom()) markSeen(room);
     set({ room, myId, unread: inRoom() ? 0 : unreadOf(room, myId) });
+    roomEffects(room, myId, get().role);
   };
 
   const fail = (field: ErrField, error: string) =>
@@ -174,6 +268,7 @@ export const useShare = create<ShareStore>((set, get) => {
       }
       const my = ++token;
       lastSeenChat = '';
+      resetEffects();
       set({ role: 'host', status: 'starting', step: 0, error: '', errField: null, ended: null });
       const s0 = Date.now();
       const room = createHostRoom({
@@ -241,6 +336,7 @@ export const useShare = create<ShareStore>((set, get) => {
       conn = null;
       const my = ++token;
       lastSeenChat = '';
+      resetEffects();
       set({
         role: 'client',
         status: 'connecting',
@@ -369,6 +465,23 @@ export const useShare = create<ShareStore>((set, get) => {
     },
 
     kick: (memberId) => hostRoom?.kick(memberId),
+
+    startSync: () =>
+      get().act({
+        type: 'syncStart',
+        restaurants: get().role === 'client' ? useData.getState().restaurants : undefined,
+      }),
+
+    answerSync: (accept) => {
+      const run = get().room?.sync;
+      if (!run || run.end) return;
+      get().act({
+        type: 'syncAnswer',
+        id: run.id,
+        accept,
+        restaurants: accept && get().role === 'client' ? useData.getState().restaurants : undefined,
+      });
+    },
 
     enterRoom: () => {
       if (!isLive(get())) {
