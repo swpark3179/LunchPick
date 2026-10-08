@@ -18,6 +18,7 @@ import {
   type FocusMap,
   hashHue,
   type Removed,
+  reservationAuthor,
   type RoomState,
   shortName,
 } from '../share/protocol';
@@ -105,12 +106,15 @@ let effectsReady = false;
 const seenRemoved = new Set<string>();
 const seenAsk = new Set<string>();
 const seenSyncEnd = new Set<string>();
+/** 이미 알린 예약 (예약·수정 시각) */
+const seenReserve = new Set<number>();
 
 const resetEffects = () => {
   effectsReady = false;
   seenRemoved.clear();
   seenAsk.clear();
   seenSyncEnd.clear();
+  seenReserve.clear();
 };
 
 const removedKey = (r: Removed) => `${r.id}:${r.at}`;
@@ -128,7 +132,22 @@ function roomEffects(room: RoomState, me: string, role: ShareRole) {
       seenAsk.add(room.sync.id);
       if (room.sync.end) seenSyncEnd.add(room.sync.id);
     }
+    if (room.reservation) seenReserve.add(room.reservation.at);
     return;
+  }
+
+  // 예약이 끝나면(고쳐지면) 방 밖에 있는 사람에게도 알린다. 방 안에서는 예약 알림 창이 뜬다.
+  const v = room.reservation;
+  if (v && !seenReserve.has(v.at)) {
+    seenReserve.add(v.at);
+    const author = reservationAuthor(v);
+    if (author !== me && !inRoom()) {
+      const who = shortName(room.members.find((m) => m.id === author)?.name ?? '누군가');
+      const rn = room.restaurants.find((r) => r.id === v.restId)?.name ?? '';
+      toast(
+        `${who}님이 ‘${rn}’ ${v.editedBy ? '예약 내용을 고쳤어요' : '예약을 마쳤어요'} · 같이 고르기에서 확인해 주세요`,
+      );
+    }
   }
 
   const run = room.sync;

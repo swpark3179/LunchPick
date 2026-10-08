@@ -31,6 +31,7 @@ import {
   rollTimeline,
 } from './anim';
 import { genLadder, ladderWinners } from './ladder';
+import { cleanItems, itemsText } from './order';
 import {
   type Action,
   type AiTurn,
@@ -141,6 +142,9 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     roll: null,
     ladder: null,
     final: null,
+    picks: {},
+    reservation: null,
+    reserving: null,
     edited: {},
     chat: [{ id: uid(), at: now, kind: 'sys', text: `방이 열렸어요 · 식당 ${restaurants.length}곳 기준` }],
     sync: null,
@@ -256,17 +260,22 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     const ids = new Set(d.restaurants.map((r) => r.id));
     const keep = <T>(o: Record<string, T>) =>
       Object.fromEntries(Object.entries(o).filter(([k]) => ids.has(k)));
-    update((s) => ({
-      ...s,
-      restaurants: d.restaurants,
-      dislikes: keep(s.dislikes),
-      exclOrder: s.exclOrder.filter((id) => ids.has(id)),
-      cands: keep(s.cands),
-      reasons: keep(s.reasons),
-      edited: keep(s.edited),
-      order: s.order.filter((id) => ids.has(id)),
-      final: s.final && ids.has(s.final.restId) ? s.final : null,
-    }));
+    update((s) => {
+      const final = s.final && ids.has(s.final.restId) ? s.final : null;
+      return {
+        ...s,
+        restaurants: d.restaurants,
+        dislikes: keep(s.dislikes),
+        exclOrder: s.exclOrder.filter((id) => ids.has(id)),
+        cands: keep(s.cands),
+        reasons: keep(s.reasons),
+        edited: keep(s.edited),
+        order: s.order.filter((id) => ids.has(id)),
+        final,
+        // 확정된 식당이 사라지면 그 식당의 메뉴·예약도 함께 사라진다.
+        ...(final ? {} : { picks: {}, reservation: null, reserving: null }),
+      };
+    });
   });
 
   const unsubSettings = useSettings.subscribe((st, prev) => {
@@ -745,16 +754,104 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     if (!r) return;
     if (state.dislikes[restId]?.length) return reject(by, '가기 싫은 곳으로 빠진 식당이에요.');
     if (state.final?.restId === restId) return;
+    if (state.reservation) return reject(by, '예약을 취소한 뒤에 다른 식당으로 바꿀 수 있어요.');
     undoEaten();
     const since = Date.now();
     useData.getState().recordEaten(restId);
     eatenMark = { restId, since };
     update((s) =>
       withSys(
-        { ...s, final: { restId, by, at: since }, ladder: null },
-        `${nm(by)}님이 ‘${r.name}’ 최종 확정했어요`,
+        // 다른 식당으로 바꾸면 고르던 메뉴는 비운다.
+        { ...s, final: { restId, by, at: since }, ladder: null, picks: {}, reserving: null },
+        `${nm(by)}님이 ‘${r.name}’ 최종 확정했어요 · 이제 각자 메뉴를 골라요`,
         by,
       ),
+    );
+  };
+
+  const unfinalize = (by: string) => {
+    if (!state.final) return;
+    if (state.reservation) return reject(by, '예약을 취소한 뒤에 다시 고를 수 있어요.');
+    undoEaten();
+    update((s) =>
+      withSys(
+        { ...s, final: null, picks: {}, reserving: null },
+        `${nm(by)}님이 확정을 풀었어요 · 다시 골라요`,
+        by,
+      ),
+    );
+  };
+
+  // ------------------------------------------------------------ 메뉴 고르기 · 예약
+
+  const finalRest = () => (state.final ? restOf(state.final.restId) : undefined);
+
+  /** 내가 고른 메뉴 전체를 바꾼다. 스테퍼를 누를 때마다 오므로 채팅에는 남기지 않는다. */
+  const pickMenu = (by: string, raw: unknown) => {
+    const r = finalRest();
+    if (!r) return reject(by, '먼저 식당을 확정해 주세요.');
+    const items = cleanItems(raw, r, LIMITS.pickQty);
+    update((s) => {
+      const picks = { ...s.picks };
+      if (items.length) picks[by] = { items, at: Date.now() };
+      else delete picks[by];
+      return { ...s, picks };
+    });
+  };
+
+  const setReserving = (by: string, on: boolean) => {
+    if (on) {
+      if (!state.final || state.reserving?.by === by) return;
+      update((s) => ({ ...s, reserving: { by, at: Date.now() } }));
+    } else if (state.reserving?.by === by) {
+      update((s) => ({ ...s, reserving: null }));
+    }
+  };
+
+  /** 예약을 고치거나 취소하는 건 예약한 사람과 호스트만 */
+  const canTouchReservation = (by: string) =>
+    !state.reservation || state.reservation.by === by || by === hostId;
+
+  const reserve = (by: string, raw: unknown, rawNote: unknown) => {
+    const r = finalRest();
+    if (!r) return reject(by, '먼저 식당을 확정해 주세요.');
+    if (!canTouchReservation(by)) return reject(by, '예약한 사람이나 호스트만 예약을 고칠 수 있어요.');
+    const items = cleanItems(raw, r, LIMITS.reserveQty);
+    const note = String(rawNote ?? '')
+      .trim()
+      .slice(0, LIMITS.reserveNote);
+    if (!items.length && !note) return reject(by, '예약한 메뉴나 특이사항을 적어 주세요.');
+    const prev = state.reservation;
+    const what = itemsText(items) || '메뉴 미정';
+    update((s) =>
+      withSys(
+        {
+          ...s,
+          reservation: {
+            by: prev ? prev.by : by,
+            at: Date.now(),
+            restId: r.id,
+            items,
+            note,
+            basis: Object.fromEntries(Object.entries(s.picks).map(([id, p]) => [id, p.items])),
+            editedBy: prev ? by : null,
+          },
+          reserving: null,
+        },
+        prev
+          ? `${nm(by)}님이 ‘${r.name}’ 예약 내용을 고쳤어요 · ${what}`
+          : `${nm(by)}님이 ‘${r.name}’ 예약을 마쳤어요 · ${what}`,
+        by,
+      ),
+    );
+  };
+
+  const unreserve = (by: string) => {
+    const v = state.reservation;
+    if (!v) return;
+    if (!canTouchReservation(by)) return reject(by, '예약한 사람이나 호스트만 예약을 취소할 수 있어요.');
+    update((s) =>
+      withSys({ ...s, reservation: null }, `${nm(by)}님이 ‘${rname(v.restId)}’ 예약을 취소했어요`, by),
     );
   };
 
@@ -981,9 +1078,19 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
         finalize(by, String(a.restId));
         return;
       case 'unfinal':
-        if (!state.final) return;
-        undoEaten();
-        update((s) => withSys({ ...s, final: null }, `${nm(by)}님이 확정을 풀었어요 · 다시 골라요`, by));
+        unfinalize(by);
+        return;
+      case 'pickMenu':
+        pickMenu(by, a.items);
+        return;
+      case 'reserving':
+        setReserving(by, a.on === true);
+        return;
+      case 'reserve':
+        reserve(by, a.items, a.note);
+        return;
+      case 'unreserve':
+        unreserve(by);
         return;
       case 'editRest':
         editRest(by, a.rest);
@@ -1019,7 +1126,16 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     if ([...conns.values()].some((x) => x.memberId === id)) return;
     clearTimeout(typingTimers.get(id));
     setFocus(id, null);
-    update((s) => withSys(patchMember(s, id, { online: false, typing: false }), `${nm(id)}님이 나갔어요`));
+    // 고른 메뉴는 다시 들어올 수 있으니 남기고, 예약 중 표시는 거둔다.
+    update((s) =>
+      withSys(
+        {
+          ...patchMember(s, id, { online: false, typing: false }),
+          reserving: s.reserving?.by === id ? null : s.reserving,
+        },
+        `${nm(id)}님이 나갔어요`,
+      ),
+    );
     // 나간 사람만 답을 안 했다면 동기화를 마무리한다.
     checkSync();
   };
@@ -1140,12 +1256,16 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
         const left = v.filter((x) => x !== memberId);
         if (left.length) dislikes[k] = left;
       }
+      const picks = { ...s.picks };
+      delete picks[memberId];
       return withSys(
         {
           ...s,
           members: s.members.filter((m) => m.id !== memberId),
           dislikes,
           exclOrder: s.exclOrder.filter((id) => dislikes[id]),
+          picks,
+          reserving: s.reserving?.by === memberId ? null : s.reserving,
         },
         `${name}님을 내보냈어요`,
       );

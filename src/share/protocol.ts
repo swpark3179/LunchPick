@@ -13,7 +13,7 @@ import type { Menu, Restaurant } from '../lib/types';
 import { HUES } from '../theme';
 
 /** 호환되지 않게 바뀌면 올린다. 다르면 접속을 거절한다. */
-export const PROTOCOL = 2;
+export const PROTOCOL = 3;
 
 export const LIMITS = {
   name: 12,
@@ -33,6 +33,13 @@ export const LIMITS = {
   syncRests: 500,
   /** 지운 식당 기록을 몇 개까지 남길지 */
   removedKeep: 50,
+  /** 한 사람이 고르거나 예약에 담을 수 있는 메뉴 가짓수 */
+  orderItems: 20,
+  /** 한 사람이 메뉴 하나를 몇 개까지 고를 수 있는지 */
+  pickQty: 9,
+  /** 예약에서 메뉴 하나를 몇 개까지 담을 수 있는지 */
+  reserveQty: 99,
+  reserveNote: 300,
 } as const;
 
 export type Member = {
@@ -103,6 +110,33 @@ export type LadderRun = {
 export type Final = { restId: string; by: string; at: number };
 
 /**
+ * 메뉴 한 줄. 식당 목록의 메뉴면 menuId 가 있고, 목록에 없어 직접 적은 메뉴는 이름만 있다.
+ * 이름·가격은 고른 때의 값을 남긴다 (그 뒤에 식당 정보가 고쳐져도 그대로 보이게).
+ */
+export type OrderItem = { menuId: string | null; name: string; price: number | null; qty: number };
+
+/** 확정된 식당에서 한 사람이 고른 메뉴 */
+export type MenuPick = { items: OrderItem[]; at: number };
+
+/** 누군가 식당에 예약하고 '예약 완료'를 누르면 모두에게 공유되는 내용 */
+export type Reservation = {
+  by: string;
+  at: number;
+  restId: string;
+  /** 실제로 예약한 메뉴 — 각자 고른 메뉴와 다를 수 있다 */
+  items: OrderItem[];
+  /** 특이사항 */
+  note: string;
+  /** 예약할 때 각자 고른 메뉴 (멤버 id -> 메뉴) — 그 뒤에 바뀐 메뉴를 알려 줄 때 이것과 비교한다 */
+  basis: Record<string, OrderItem[]>;
+  /** 마지막으로 고친 사람 (처음 예약 그대로면 null). 호스트가 고쳐도 예약한 사람(by)은 그대로다. */
+  editedBy: string | null;
+};
+
+/** 예약을 마지막으로 보낸 사람 (예약했거나 고친 사람) */
+export const reservationAuthor = (v: Reservation) => v.editedBy ?? v.by;
+
+/**
  * 식당 정보 동기화 — 누구든 요청하면 모두에게 수락/거절을 묻는다. 방의 식당 목록은 호스트
  * 목록이라 호스트가 수락해야 합쳐지고, 끝나면 수락한 사람들이 합쳐진 목록을 각자 받는다.
  */
@@ -148,6 +182,11 @@ export type RoomState = {
   roll: Roll | null;
   ladder: LadderRun | null;
   final: Final | null;
+  /** 확정된 식당에서 각자 고른 메뉴 (멤버 id -> 메뉴). 확정이 바뀌거나 풀리면 비운다. */
+  picks: Record<string, MenuPick>;
+  reservation: Reservation | null;
+  /** 지금 예약 화면을 열어 둔 사람 — 두 사람이 같이 전화하지 않게 모두에게 보인다 */
+  reserving: { by: string; at: number } | null;
   /** 같이 고르기 중에 정보를 고친 식당 (방금 수정됨 표시) */
   edited: Record<string, number>;
   chat: ChatMsg[];
@@ -174,6 +213,13 @@ export type Action =
   | { type: 'ladderClose' }
   | { type: 'final'; restId: string }
   | { type: 'unfinal' }
+  /** 내가 고른 메뉴 전체 (빈 배열이면 비운다) */
+  | { type: 'pickMenu'; items: OrderItem[] }
+  /** 예약 화면을 열었다(true) / 닫았다(false) */
+  | { type: 'reserving'; on: boolean }
+  /** 예약 완료 — 이미 예약이 있으면 고친다 */
+  | { type: 'reserve'; items: OrderItem[]; note: string }
+  | { type: 'unreserve' }
   | { type: 'editRest'; rest: EditableRest }
   | { type: 'removeRest'; restId: string }
   /** 참여자가 시작하면 자기 식당 목록을 함께 보낸다 */

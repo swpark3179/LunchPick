@@ -73,6 +73,7 @@ export default function InfoDrawer({
           ? ['후보', 'oklch(0.965 0.025 50)', AINK]
           : null;
   const excluded = !!room.dislikes[r.id]?.length;
+  const isFinal = room.final?.restId === r.id;
 
   const startEdit = () =>
     setDraft({
@@ -556,8 +557,12 @@ export default function InfoDrawer({
               </button>
               <button
                 type="button"
-                className={excluded ? '' : 'tg-accent'}
+                className={excluded || isFinal ? '' : 'tg-accent'}
                 onClick={() => {
+                  if (isFinal) {
+                    onClose();
+                    return;
+                  }
                   if (excluded) {
                     toast('가기 싫은 곳으로 빠진 식당이에요');
                     return;
@@ -565,9 +570,13 @@ export default function InfoDrawer({
                   act({ type: 'final', restId: r.id });
                   onClose();
                 }}
-                style={{ ...footBtn(true), opacity: excluded ? 0.4 : 1 }}
+                style={{
+                  ...footBtn(true),
+                  opacity: excluded ? 0.4 : 1,
+                  background: isFinal ? 'oklch(0.55 0.13 150)' : AC,
+                }}
               >
-                이 식당으로 최종 확정
+                {isFinal ? '확정된 식당이에요 · 닫기' : '이 식당으로 최종 확정'}
               </button>
             </>
           ) : (

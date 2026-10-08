@@ -1,6 +1,6 @@
 /**
  * 최종 확정 (시안: 최종 확정) — 누구든 확정하면 모두의 화면에 색종이와 함께 뜬다.
- * 닫는 건 각자 한다. '다시 고르기' 는 모두에게 확정을 푼다.
+ * 닫는 건 각자 한다. '다시 고르기' 는 모두에게 확정을 푼다. 닫으면 메뉴 고르기(OrderPanel)로 이어진다.
  */
 import { useMemo } from 'react';
 
@@ -195,6 +195,18 @@ export default function FinalModal({
             </div>
             <span style={{ fontSize: 12.5, color: 'oklch(0.5 0.012 60)', paddingLeft: 8 }}>{byText}</span>
           </div>
+          <div
+            style={{
+              fontSize: 12.5,
+              lineHeight: 1.5,
+              padding: '9px 12px',
+              borderRadius: 8,
+              background: 'oklch(0.975 0.004 75)',
+              color: 'oklch(0.42 0.012 60)',
+            }}
+          >
+            이제 각자 먹을 메뉴를 골라요. 예약한 사람이 ‘예약 완료’를 누르면 모두에게 알려져요.
+          </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
             <button
               type="button"
@@ -231,7 +243,7 @@ export default function FinalModal({
                 cursor: 'pointer',
               }}
             >
-              좋아요
+              메뉴 고르러 가기
             </button>
           </div>
         </div>
