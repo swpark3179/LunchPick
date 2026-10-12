@@ -225,12 +225,18 @@
     0 0 0 2px oklch(0.56 0.16 40),
     0 8px 22px oklch(0.56 0.16 40 / 0.2) !important;
 }
-.tg-member .tg-kick {
+.tg-member .tg-kick,
+.tg-member .tg-call {
   opacity: 0;
   transition: opacity 0.15s;
 }
-.tg-member:hover .tg-kick {
+.tg-member:hover .tg-kick,
+.tg-member:hover .tg-call,
+.tg-member .tg-call:focus-visible {
   opacity: 1;
+}
+.tg-call:hover {
+  background: oklch(0.965 0.025 50) !important;
 }
 .tg-input:focus {
   border-color: oklch(0.56 0.16 40) !important;

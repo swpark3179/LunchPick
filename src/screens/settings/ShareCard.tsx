@@ -28,6 +28,7 @@ import {
   btnSoft,
   shakeAnim,
 } from '../together/parts';
+import RoomFinder from './RoomFinder';
 
 const LABEL: React.CSSProperties = { fontSize: 13, fontWeight: 650, color: 'oklch(0.38 0.012 60)' };
 const GRID: React.CSSProperties = {
@@ -544,47 +545,8 @@ export default function ShareCard() {
               {addrErr}
             </span>
           </div>
-          <span style={LABEL}>최근 접속</span>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {s.recentHosts.length ? (
-              s.recentHosts.map((r) => (
-                <div
-                  key={r.addr}
-                  role="button"
-                  tabIndex={0}
-                  className="tg-soft"
-                  onClick={() => {
-                    sh.clearError();
-                    s.patch({ joinAddr: r.addr });
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') s.patch({ joinAddr: r.addr });
-                  }}
-                  style={{
-                    height: 28,
-                    padding: '0 11px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    borderRadius: 14,
-                    fontSize: 12.5,
-                    cursor: 'pointer',
-                    background: 'white',
-                    boxShadow: `inset 0 0 0 1px ${INPUT_BORDER}`,
-                  }}
-                >
-                  {r.name ? <b style={{ fontWeight: 650 }}>{r.name}</b> : null}
-                  <span style={{ color: 'oklch(0.55 0.012 60)', fontVariantNumeric: 'tabular-nums' }}>
-                    {r.addr}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <span style={{ fontSize: 12.5, color: MUTED_3 }}>
-                아직 없어요. 한 번 접속하면 여기에 남아요.
-              </span>
-            )}
-          </div>
+          <span style={{ ...LABEL, alignSelf: 'start', paddingTop: 5 }}>방 찾기</span>
+          <RoomFinder />
         </div>
       ) : null}
 

@@ -138,6 +138,7 @@ type Wire =
 
 const chName = (port: number) => `lunchpick-share-${port}`;
 const ACK_TIMEOUT_MS = 1200;
+const PROBE_REPLY_MS = 1000;
 
 function devHost(): HostTransport {
   let ch: BroadcastChannel | null = null;
@@ -246,8 +247,47 @@ function devClient(): ClientTransport {
   };
 }
 
+/** 개발용 방 찾기 — 따로 채널을 열어 인사(ack)를 받으면 text 를 보내고 첫 답을 기다린다. */
+function devProbe(port: number, text: string): Promise<string | null> {
+  const cid = `p${Math.random().toString(36).slice(2, 8)}`;
+  const c = new BroadcastChannel(chName(port));
+  return new Promise<string | null>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = (reply: string | null, err?: Error) => {
+      clearTimeout(timer);
+      c.postMessage({ k: 'close', cid } satisfies Wire);
+      c.close();
+      if (err) reject(err);
+      else resolve(reply);
+    };
+    timer = setTimeout(
+      () => finish(null, new Error(`포트 ${port} 에서 열린 방을 찾지 못했어요.`)),
+      ACK_TIMEOUT_MS,
+    );
+    c.onmessage = ({ data: m }: MessageEvent<Wire>) => {
+      if (m.k === 'ack' && m.to === cid) {
+        clearTimeout(timer);
+        timer = setTimeout(() => finish(null), PROBE_REPLY_MS);
+        c.postMessage({ k: 'c2h', cid, data: text } satisfies Wire);
+      } else if (m.k === 'h2c' && m.to === cid) {
+        finish(m.data);
+      }
+    };
+    c.postMessage({ k: 'open', cid } satisfies Wire);
+  });
+}
+
 export const hostTransport: HostTransport = hasTauri ? tauriHost() : devHost();
 export const clientTransport: ClientTransport = hasTauri ? tauriClient() : devClient();
+
+/**
+ * 방 찾기: 지금 연결과 상관없이 따로 붙어 text 를 한 번 보내고 첫 답을 받는다.
+ * 붙었지만 답이 없으면 null, 붙지 못하면 reject 한다.
+ */
+export async function probeHost(host: string, port: number, text: string): Promise<string | null> {
+  if (!hasTauri) return devProbe(port, text);
+  return invoke<string | null>('share_probe', { host, port, text });
+}
 
 /** 서버를 켜기 전에도 내 주소를 보여주기 위해 쓴다. */
 export async function localInfo(port: number): Promise<HostInfo> {

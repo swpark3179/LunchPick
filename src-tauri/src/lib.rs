@@ -31,6 +31,7 @@ pub fn run() {
             share::share_client_connect,
             share::share_client_send,
             share::share_client_disconnect,
+            share::share_probe,
         ])
         .run(tauri::generate_context!())
         .expect("점심픽을 실행하는 중 오류가 발생했습니다");

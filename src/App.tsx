@@ -9,6 +9,7 @@ import { windowShow } from './lib/ipc';
 import ListScreen from './screens/ListScreen';
 import PickScreen from './screens/PickScreen';
 import SettingsScreen from './screens/SettingsScreen';
+import CalledDialog from './screens/together/CalledDialog';
 import EndedDialog from './screens/together/EndedDialog';
 import TogetherScreen from './screens/together/TogetherScreen';
 import { useData } from './store/dataStore';
@@ -124,6 +125,8 @@ export default function App() {
       </div>
       {/* 같이 고르기가 끝나면(호스트 종료·내보냄·연결 끊김) 어느 화면에서든 한 번 알린다. */}
       <EndedDialog />
+      {/* 누군가 나를 불렀으면(같이 고르기의 부르기) 어느 화면에서든 알린다. */}
+      <CalledDialog />
       {/* 모달이 깨지면 닫고 알린다 — 목록 화면은 그대로 쓸 수 있다. */}
       <ErrorBoundary
         resetKey={modalOpen}

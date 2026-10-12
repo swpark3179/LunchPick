@@ -84,6 +84,8 @@ export type HostCallbacks = {
   onGuestJoined: (m: Member) => void;
   /** 호스트 자신의 요청이 거절됐을 때 */
   onError: (msg: string) => void;
+  /** 누군가 호스트를 불렀을 때 (부른 사람의 멤버 id) */
+  onCalled: (by: string) => void;
 };
 
 export type HostRoom = {
@@ -1008,6 +1010,35 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     checkSync();
   };
 
+  // ------------------------------------------------------------ 부르기
+
+  /** '부른 사람>불린 사람' -> 마지막으로 부른 시각 */
+  const lastCall = new Map<string, number>();
+
+  const callMember = (by: string, to: string) => {
+    const target = member(to);
+    if (to === by) return;
+    if (!target?.online) {
+      reject(by, '지금 방에 없는 사람이에요.');
+      return;
+    }
+    const key = `${by}>${to}`;
+    const t = Date.now();
+    if (t - (lastCall.get(key) ?? 0) < LIMITS.callCooldownMs) {
+      reject(by, `방금 ${nm(to)}님을 불렀어요. 잠시 뒤에 다시 불러 주세요.`);
+      return;
+    }
+    lastCall.set(key, t);
+    if (to === hostId) cb.onCalled(by);
+    else
+      send(
+        [...conns.values()].filter((c) => c.memberId === to).map((c) => c.peer),
+        { t: 'call', by },
+      );
+    // 누가 누구를 불렀는지 모두에게 남긴다.
+    update((s) => withSys(s, `${nm(by)}님이 ${nm(to)}님을 불렀어요`, by));
+  };
+
   // ------------------------------------------------------------ Action
 
   const act = (by: string, a: Action) => {
@@ -1110,6 +1141,9 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
         update((s) => patchMember(s, by, { name, hue: hashHue(name) }));
         return;
       }
+      case 'call':
+        callMember(by, String(a.to));
+        return;
     }
   };
 
@@ -1230,6 +1264,14 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     }
     if (!m || typeof m !== 'object') return;
     if (m.t === 'ping') send([c.peer], { t: 'pong' });
+    // 방 찾기 — 들어오지 않고 묻기만 한다. 묻는 쪽이 답을 받고 바로 닫는다.
+    else if (m.t === 'probe' && !c.memberId)
+      send([c.peer], {
+        t: 'info',
+        v: PROTOCOL,
+        host: member(hostId)?.name ?? '',
+        online: state.members.filter((x) => x.online).length,
+      });
     else if (m.t === 'hello') hello(c, m);
     else if (m.t === 'act' && c.memberId) act(c.memberId, m.a);
   };

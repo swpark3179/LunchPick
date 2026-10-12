@@ -41,7 +41,8 @@ export type FabrixConf = {
 
 export type ShareMode = 'host' | 'join';
 
-export type RecentHost = { addr: string; name: string };
+/** 한 번이라도 들어간 방 (설정의 방 찾기). at 은 마지막으로 들어간 시각 */
+export type RecentHost = { addr: string; name: string; at?: number };
 
 export type Settings = {
   /** 같이 고르기 — 호스트로 열 때의 포트 */
@@ -52,9 +53,11 @@ export type Settings = {
   shareId: string;
   /** 앱을 켜면 공유 서버도 함께 시작 */
   autoStart: boolean;
+  /** 같이 고르기 — 새 채팅이 와도 작업표시줄에서 깜박이지 않는다 (부르기는 그대로 온다) */
+  quiet: boolean;
   /** 설정 화면에서 마지막으로 고른 탭 */
   shareMode: ShareMode;
-  /** 참여할 호스트 주소(주소:포트)와 최근 접속한 방 */
+  /** 참여할 호스트 주소(주소:포트)와 한 번이라도 들어간 방 (최근 순) */
   joinAddr: string;
   recentHosts: RecentHost[];
   /** 표시 / 동작 */

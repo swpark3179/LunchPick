@@ -40,6 +40,8 @@ export const LIMITS = {
   /** 예약에서 메뉴 하나를 몇 개까지 담을 수 있는지 */
   reserveQty: 99,
   reserveNote: 300,
+  /** 같은 사람을 다시 부를 수 있기까지 (ms) */
+  callCooldownMs: 30000,
 } as const;
 
 export type Member = {
@@ -225,7 +227,9 @@ export type Action =
   /** 참여자가 시작하면 자기 식당 목록을 함께 보낸다 */
   | { type: 'syncStart'; restaurants?: Restaurant[] }
   | { type: 'syncAnswer'; id: string; accept: boolean; restaurants?: Restaurant[] }
-  | { type: 'profile'; name: string; hue: number };
+  | { type: 'profile'; name: string; hue: number }
+  /** 한 사람을 부른다 — 그 사람 PC 에서 점심픽 창이 한 번 맨 앞으로 뜬다 */
+  | { type: 'call'; to: string };
 
 /** 참여자 → 호스트 */
 export type C2H =
@@ -240,7 +244,9 @@ export type C2H =
       resume?: boolean;
     }
   | { t: 'act'; a: Action }
-  | { t: 'ping' };
+  | { t: 'ping' }
+  /** 방 찾기 — 들어가지 않고 방이 열려 있는지만 묻는다 (hello 없이 보내고 답을 받으면 닫는다) */
+  | { t: 'probe' };
 
 /** 누가(멤버 id) 어느 식당 카드(식당 id)를 보고 있는지 */
 export type FocusMap = Record<string, string>;
@@ -251,6 +257,10 @@ export type H2C =
   | { t: 'state'; state: RoomState }
   | { t: 'focus'; focus: FocusMap }
   | { t: 'pong' }
+  /** 누군가(멤버 id) 나를 불렀다 — 불린 사람에게만 간다 */
+  | { t: 'call'; by: string }
+  /** probe 에 대한 답 */
+  | { t: 'info'; v: number; host: string; online: number }
   | { t: 'err'; msg: string }
   | { t: 'bye'; reason: string };
 
