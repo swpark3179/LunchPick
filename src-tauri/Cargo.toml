@@ -1,6 +1,6 @@
 [package]
 name = "lunchpick"
-version = "1.2.1"
+version = "1.3.0"
 description = "LunchPick desktop app"
 authors = ["s-w.park"]
 edition = "2021"
