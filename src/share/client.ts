@@ -5,7 +5,7 @@
  * 방 상태를 그대로 화면에 반영할 뿐이다. 연결이 끊기면 같은 id 로 몇 번 다시 붙어 본다.
  */
 import { type Action, type C2H, type FocusMap, type H2C, PROTOCOL, type RoomState } from './protocol';
-import { clientTransport } from './transport';
+import { clientTransport, probeHost } from './transport';
 
 const WELCOME_TIMEOUT_MS = 5000;
 const PING_MS = 8000;
@@ -17,6 +17,8 @@ export type ClientStatus = 'connecting' | 'connected' | 'reconnecting';
 export type ClientCallbacks = {
   onState: (s: RoomState, you: string) => void;
   onFocus: (f: FocusMap) => void;
+  /** 누군가(멤버 id) 나를 불렀다 */
+  onCall?: (by: string) => void;
   /** 소켓이 열렸다 (첫 접속에서만 — 연결 단계 표시에 쓴다) */
   onSocket?: () => void;
   onStatus: (s: ClientStatus) => void;
@@ -89,6 +91,8 @@ export function joinRoom(
           if (welcomed) cb.onState(m.state, you);
         } else if (m.t === 'focus') {
           if (welcomed) cb.onFocus(m.focus ?? {});
+        } else if (m.t === 'call') {
+          if (welcomed && typeof m.by === 'string') cb.onCall?.(m.by);
         } else if (m.t === 'err') {
           cb.onError(m.msg);
         } else if (m.t === 'bye') {
@@ -203,4 +207,32 @@ export function joinRoom(
       throw e;
     },
   );
+}
+
+// ---------------------------------------------------------------- 방 찾기
+
+/** 방이 열려 있는지. 열렸으면 호스트가 알려 준 이름·접속 인원·프로토콜 버전 (옛 버전 호스트는 답이 없다) */
+export type RoomProbe = { open: true; host?: string; online?: number; v?: number } | { open: false };
+
+/** 들어가지 않고 그 주소에 같이 고르기 방이 열려 있는지만 확인한다. */
+export async function probeRoom(host: string, port: number): Promise<RoomProbe> {
+  let reply: string | null;
+  try {
+    reply = await probeHost(host, port, JSON.stringify({ t: 'probe' } satisfies C2H));
+  } catch {
+    return { open: false };
+  }
+  try {
+    const m = reply ? (JSON.parse(reply) as H2C) : null;
+    if (m?.t === 'info')
+      return {
+        open: true,
+        host: typeof m.host === 'string' ? m.host : undefined,
+        online: typeof m.online === 'number' ? m.online : undefined,
+        v: typeof m.v === 'number' ? m.v : undefined,
+      };
+  } catch {
+    /* 알아볼 수 없는 답 — 열려 있다는 것만 안다 */
+  }
+  return { open: true };
 }

@@ -8,6 +8,7 @@
  */
 import { create } from 'zustand';
 
+import { windowFlash, windowSummon } from '../lib/ipc';
 import { mergeRestaurants, nameKey } from '../lib/shareFormat';
 import type { RecentHost } from '../lib/types';
 import { joinRoom, type ClientConn } from '../share/client';
@@ -17,6 +18,7 @@ import {
   cleanName,
   type FocusMap,
   hashHue,
+  LIMITS,
   type Removed,
   reservationAuthor,
   type RoomState,
@@ -24,7 +26,7 @@ import {
 } from '../share/protocol';
 import { clientTransport, type HostInfo, hostTransport } from '../share/transport';
 import { useData } from './dataStore';
-import { useSettings } from './settingsStore';
+import { RECENT_MAX, useSettings } from './settingsStore';
 import { toast, useUi } from './uiStore';
 
 export type ShareRole = 'none' | 'host' | 'client';
@@ -32,7 +34,6 @@ export type ShareStatus = 'idle' | 'starting' | 'hosting' | 'connecting' | 'conn
 export type ErrField = 'port' | 'addr' | null;
 
 const BYE_FLUSH_MS = 180;
-const RECENT_MAX = 4;
 const FOCUS_SEND_MS = 160;
 /** 접속이 끝나고 같이 고르기 화면으로 넘어가기까지 (시안: '곧 이동해요') */
 const AUTO_ENTER_MS = 1100;
@@ -61,6 +62,8 @@ type ShareStore = {
   unread: number;
   /** 세션이 끝난 이유 (호스트 종료·내보냄·연결 끊김). 확인하면 지운다. */
   ended: string | null;
+  /** 누군가 나를 불렀다 (부른 사람의 id·짧은 이름). 확인하면 지운다. */
+  called: { by: string; name: string } | null;
 
   startHost: () => Promise<boolean>;
   stopHost: () => Promise<void>;
@@ -71,12 +74,17 @@ type ShareStore = {
   /** 내가 보고 있는 카드 — 다른 사람 화면에 이름표로 보인다 */
   sendFocus: (restId: string | null) => void;
   kick: (memberId: string) => void;
+  /** 한 사람을 부른다 — 그 사람 창이 한 번 맨 앞으로 뜬다 */
+  callMember: (memberId: string) => void;
   /** 식당 정보 동기화를 요청한다 — 참여자면 내 식당 목록을 함께 보낸다 */
   startSync: () => void;
   /** 지금 열린 동기화 요청에 답한다 */
   answerSync: (accept: boolean) => void;
   enterRoom: () => void;
   dismissEnded: () => void;
+  dismissCalled: () => void;
+  /** 방 찾기 목록에서 지운다 */
+  removeRecent: (addr: string) => void;
   clearError: () => void;
 };
 
@@ -108,6 +116,11 @@ const seenAsk = new Set<string>();
 const seenSyncEnd = new Set<string>();
 /** 이미 알린 예약 (예약·수정 시각) */
 const seenReserve = new Set<number>();
+/** 작업표시줄 깜박임을 이미 판단한 마지막 채팅 (처음 받은 상태는 본 것으로 친다) */
+let alertReady = false;
+let lastAlertChat = '';
+/** 내가 부른 사람 -> 부른 시각 (호스트도 막지만, 거절되기 전에 미리 알려 준다) */
+const myCalls = new Map<string, number>();
 
 const resetEffects = () => {
   effectsReady = false;
@@ -115,7 +128,29 @@ const resetEffects = () => {
   seenAsk.clear();
   seenSyncEnd.clear();
   seenReserve.clear();
+  alertReady = false;
+  lastAlertChat = '';
+  myCalls.clear();
 };
+
+/**
+ * 다른 사람의 새 채팅이 오면, 창을 보고 있지 않을 때 작업표시줄을 깜박인다 ('조용히'면 하지 않는다).
+ * 창을 보고 있는지는 windowFlash 가 확인한다.
+ */
+function alertChat(room: RoomState, me: string) {
+  const last = room.chat[room.chat.length - 1];
+  if (!last) return;
+  if (!alertReady) {
+    alertReady = true;
+    lastAlertChat = last.id;
+    return;
+  }
+  if (last.id === lastAlertChat) return;
+  const fresh = room.chat.slice(room.chat.findIndex((m) => m.id === lastAlertChat) + 1);
+  lastAlertChat = last.id;
+  if (useSettings.getState().quiet) return;
+  if (fresh.some((m) => m.kind === 'chat' && m.from !== me)) void windowFlash().catch(() => {});
+}
 
 const removedKey = (r: Removed) => `${r.id}:${r.at}`;
 
@@ -238,6 +273,14 @@ export const useShare = create<ShareStore>((set, get) => {
     if (inRoom()) markSeen(room);
     set({ room, myId, unread: inRoom() ? 0 : unreadOf(room, myId) });
     roomEffects(room, myId, get().role);
+    alertChat(room, myId);
+  };
+
+  /** 누군가 나를 불렀다 — 알림 창을 띄우고 점심픽 창을 한 번 맨 앞으로 올린다. */
+  const receiveCall = (by: string) => {
+    const who = get().room?.members.find((m) => m.id === by);
+    set({ called: { by, name: shortName(who?.name ?? '누군가') } });
+    void windowSummon().catch(() => {});
   };
 
   const fail = (field: ErrField, error: string) =>
@@ -257,6 +300,7 @@ export const useShare = create<ShareStore>((set, get) => {
       room: null,
       focus: {},
       unread: 0,
+      called: null,
       ...p,
     });
     if (inRoom()) useUi.getState().setView('settings');
@@ -277,6 +321,7 @@ export const useShare = create<ShareStore>((set, get) => {
     focus: {},
     unread: 0,
     ended: null,
+    called: null,
 
     startHost: async () => {
       if (get().role !== 'none') return false;
@@ -297,6 +342,7 @@ export const useShare = create<ShareStore>((set, get) => {
           if (!inRoom()) toast(`${shortName(m.name)}님이 들어왔어요`);
         },
         onError: (msg) => toast(msg),
+        onCalled: receiveCall,
       });
       try {
         // 1. 포트 확인
@@ -378,6 +424,9 @@ export const useShare = create<ShareStore>((set, get) => {
         onFocus: (focus) => {
           if (my === token) set({ focus });
         },
+        onCall: (by) => {
+          if (my === token) receiveCall(by);
+        },
         onSocket: () => onSocket(),
         onStatus: (status) => {
           // 첫 접속의 단계 표시는 여기서 직접 진행한다. 다시 붙는 중·다시 붙은 뒤만 그대로 반영한다.
@@ -428,7 +477,7 @@ export const useShare = create<ShareStore>((set, get) => {
         const key = `${addr.host}:${addr.port}`;
         const hostName = get().room?.members.find((m) => m.host)?.name ?? '';
         const recents: RecentHost[] = [
-          { addr: key, name: shortName(hostName) },
+          { addr: key, name: shortName(hostName), at: Date.now() },
           ...st.recentHosts.filter((h) => h.addr !== key),
         ].slice(0, RECENT_MAX);
         st.patch({ joinAddr: key, recentHosts: recents });
@@ -485,6 +534,22 @@ export const useShare = create<ShareStore>((set, get) => {
 
     kick: (memberId) => hostRoom?.kick(memberId),
 
+    callMember: (memberId) => {
+      const { room, myId } = get();
+      const m = room?.members.find((x) => x.id === memberId);
+      if (!m || memberId === myId) return;
+      const name = shortName(m.name);
+      const t = Date.now();
+      if (t - (myCalls.get(memberId) ?? 0) < LIMITS.callCooldownMs) {
+        toast(`방금 ${name}님을 불렀어요. 잠시 뒤에 다시 불러 주세요.`);
+        return;
+      }
+      myCalls.set(memberId, t);
+      // 호스트가 거절하면 그 안내가 이 토스트를 덮는다.
+      toast(`${name}님을 불렀어요`);
+      get().act({ type: 'call', to: memberId });
+    },
+
     startSync: () =>
       get().act({
         type: 'syncStart',
@@ -514,6 +579,12 @@ export const useShare = create<ShareStore>((set, get) => {
     },
 
     dismissEnded: () => set({ ended: null }),
+    dismissCalled: () => set({ called: null }),
+
+    removeRecent: (addr) => {
+      const st = useSettings.getState();
+      st.patch({ recentHosts: st.recentHosts.filter((h) => h.addr !== addr) });
+    },
     clearError: () => set({ error: '', errField: null }),
   };
 });

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "점심픽 기본 권한 — 창 조작, 파일 다이얼로그, 클립보드",
+  "description": "점심픽 기본 권한 — 창 조작(같이 고르기 알림·부르기 포함), 파일 다이얼로그, 클립보드",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -12,6 +12,9 @@
     "core:window:allow-close",
     "core:window:allow-show",
     "core:window:allow-start-dragging",
+    "core:window:allow-request-user-attention",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-always-on-top",
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message",

@@ -5,7 +5,7 @@
  * localStorage 로 폴백한다 (AI 는 폴백 없이 실패 — 프론트에서 무작위로 처리한다).
  */
 import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 
@@ -136,3 +136,29 @@ export const windowToggleMaximize = () =>
   hasTauri ? getCurrentWindow().toggleMaximize() : Promise.resolve();
 export const windowClose = () => (hasTauri ? getCurrentWindow().close() : Promise.resolve());
 export const windowShow = () => (hasTauri ? getCurrentWindow().show() : Promise.resolve());
+
+/** 창을 보고 있지 않을 때만 작업표시줄을 깜박인다 (Windows 는 창이 앞으로 오면 저절로 멈춘다). */
+export async function windowFlash(): Promise<void> {
+  if (!hasTauri) return;
+  const w = getCurrentWindow();
+  if (await w.isFocused()) return;
+  await w.requestUserAttention(UserAttentionType.Informational);
+}
+
+/** 맨 위에 잠깐 붙여 두는 시간 — 그 뒤로는 다른 창처럼 뒤로 갈 수 있다 */
+const SUMMON_TOP_MS = 1500;
+
+/**
+ * 창을 한 번 맨 앞으로 띄운다 (같이 고르기의 부르기). 최소화돼 있으면 되살리고, 잠깐만 맨 위에 붙였다가 푼다.
+ * Windows 가 포커스를 넘겨주지 않아도 알아챌 수 있게 작업표시줄도 함께 깜박인다.
+ */
+export async function windowSummon(): Promise<void> {
+  if (!hasTauri) return;
+  const w = getCurrentWindow();
+  await w.requestUserAttention(UserAttentionType.Critical).catch(() => {});
+  await w.unminimize().catch(() => {});
+  await w.show().catch(() => {});
+  await w.setAlwaysOnTop(true).catch(() => {});
+  await w.setFocus().catch(() => {});
+  setTimeout(() => void w.setAlwaysOnTop(false).catch(() => {}), SUMMON_TOP_MS);
+}

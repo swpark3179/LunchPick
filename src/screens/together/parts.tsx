@@ -232,6 +232,29 @@ export const IconSync = (p: IconProps) => (
     <path d="M19.5 19.5V15H15" />
   </Svg>
 );
+/** 알림 켜짐 — 종 */
+export const IconBell = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z" />
+    <path d="M10 20.5a2.2 2.2 0 0 0 4 0" />
+  </Svg>
+);
+/** 조용히 — 빗금 친 종 */
+export const IconBellOff = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M8.3 5.9A6 6 0 0 1 18 11v4.5M6 9.6V16.5L4.5 18H18" />
+    <path d="M10 20.5a2.2 2.2 0 0 0 4 0" />
+    <path d="M3.5 3.5l17 17" />
+  </Svg>
+);
+/** 부르기 — 울리는 종 */
+export const IconRing = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M7 16.5V11a5 5 0 0 1 10 0v5.5l1.3 1.3H5.7z" />
+    <path d="M10.3 20.3a1.9 1.9 0 0 0 3.4 0" />
+    <path d="M3.5 8.5a8.5 8.5 0 0 1 2.4-4.4M20.5 8.5a8.5 8.5 0 0 0-2.4-4.4" />
+  </Svg>
+);
 /** 다른 사람이 보고 있는 카드에 붙는 이름표의 화살표 */
 export const IconCursor = ({ size = 10, style }: IconProps) => (
   <Svg size={size} fill="currentColor" style={style}>

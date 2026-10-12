@@ -11,12 +11,15 @@ import type { AnimSpeed, FabrixConf, RecentHost, Settings } from '../lib/types';
 import { toastError } from './uiStore';
 
 const SAVE_DEBOUNCE_MS = 400;
+/** 방 찾기에 기억해 두는 방 수 */
+export const RECENT_MAX = 20;
 
 export const DEFAULTS: Settings = {
   port: '8787',
   name: '',
   shareId: '',
   autoStart: false,
+  quiet: false,
   shareMode: 'host',
   joinAddr: '',
   recentHosts: [],
@@ -45,18 +48,19 @@ type SettingsState = Settings & {
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
-/** 최근 접속 목록 — 모양이 어긋난 항목은 버린다. */
+/** 방 찾기 목록 — 모양이 어긋난 항목은 버린다. */
 const cleanRecents = (raw: unknown): RecentHost[] =>
   (Array.isArray(raw) ? raw : [])
-    .map((x) =>
-      typeof x === 'string'
-        ? { addr: x, name: '' }
-        : x && typeof x === 'object'
-          ? { addr: String((x as RecentHost).addr ?? ''), name: String((x as RecentHost).name ?? '') }
-          : null,
-    )
+    .map((x): RecentHost | null => {
+      if (typeof x === 'string') return { addr: x, name: '' };
+      if (!x || typeof x !== 'object') return null;
+      const r = x as RecentHost;
+      const h: RecentHost = { addr: String(r.addr ?? ''), name: String(r.name ?? '') };
+      if (typeof r.at === 'number' && Number.isFinite(r.at)) h.at = r.at;
+      return h;
+    })
     .filter((x): x is RecentHost => !!x && !!x.addr)
-    .slice(0, 4);
+    .slice(0, RECENT_MAX);
 
 const newShareId = () =>
   Array.from({ length: 12 }, () => Math.floor(Math.random() * 36).toString(36)).join('');
@@ -67,6 +71,7 @@ function persistable(s: SettingsState): Settings {
     name: s.name,
     shareId: s.shareId,
     autoStart: s.autoStart,
+    quiet: s.quiet,
     shareMode: s.shareMode,
     joinAddr: s.joinAddr,
     recentHosts: s.recentHosts,

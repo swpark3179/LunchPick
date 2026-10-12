@@ -30,6 +30,9 @@ const MAX_MESSAGE: usize = 1 << 20;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 const CLOSE_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+/// 방 찾기는 목록의 방들을 한꺼번에 확인하므로 접속보다 짧게 기다린다.
+const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_millis(2500);
+const PROBE_REPLY_TIMEOUT: Duration = Duration::from_millis(1200);
 /// 사내 점심 모임 규모를 넘는 접속은 받지 않는다.
 const MAX_PEERS: usize = 32;
 /// 참여자가 접속하는 경로. 다른 프로그램의 WebSocket 과 섞이지 않게 구분만 한다.
@@ -424,6 +427,16 @@ fn clean_host(raw: &str) -> Result<String, String> {
     Ok(h.to_string())
 }
 
+/// 다듬은 호스트 주소로 접속 URL 을 만든다. IPv6 리터럴은 대괄호로 감싼다.
+fn ws_url(host: &str, port: u16) -> String {
+    let authority = if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
+    format!("ws://{authority}{WS_PATH}")
+}
+
 #[tauri::command]
 pub async fn share_client_connect<R: Runtime>(
     app: AppHandle<R>,
@@ -439,13 +452,7 @@ pub async fn share_client_connect<R: Runtime>(
     stop_host(&state);
     stop_client(&state);
 
-    // IPv6 리터럴은 대괄호로 감싼다.
-    let authority = if host.contains(':') && !host.starts_with('[') {
-        format!("[{host}]:{port}")
-    } else {
-        format!("{host}:{port}")
-    };
-    let url = format!("ws://{authority}{WS_PATH}");
+    let url = ws_url(&host, port);
 
     let connected = tokio::time::timeout(
         CONNECT_TIMEOUT,
@@ -511,6 +518,40 @@ pub async fn share_client_connect<R: Runtime>(
 
     *state.client.lock().unwrap() = Some(Client { tx, stop: stop_tx });
     Ok(())
+}
+
+/// 방 찾기 — 지금의 접속·서버와 상관없이 따로 붙어 `text` 를 한 번 보내고, 잠시 기다려 온 첫 답을
+/// 돌려준다. 붙었지만 답이 없으면 `None` (옛 버전 호스트), 붙지 못하면 에러다.
+#[tauri::command]
+pub async fn share_probe(host: String, port: u16, text: String) -> Result<Option<String>, String> {
+    if port == 0 {
+        return Err("포트를 확인해 주세요.".into());
+    }
+    let host = clean_host(&host)?;
+    let connected = tokio::time::timeout(
+        PROBE_CONNECT_TIMEOUT,
+        tokio_tungstenite::connect_async_with_config(ws_url(&host, port), Some(ws_config()), true),
+    )
+    .await
+    .map_err(|_| format!("{host}:{port} 가 응답하지 않아요."))?;
+    let (mut ws, _) = connected.map_err(|e| connect_error(&host, port, e))?;
+
+    if ws.send(Message::text(text)).await.is_err() {
+        return Ok(None);
+    }
+    let reply = tokio::time::timeout(PROBE_REPLY_TIMEOUT, async {
+        loop {
+            match ws.next().await {
+                Some(Ok(Message::Text(t))) => break Some(t.to_string()),
+                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break None,
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await
+    .unwrap_or(None);
+    let _ = tokio::time::timeout(CLOSE_FLUSH_TIMEOUT, ws.close(None)).await;
+    Ok(reply)
 }
 
 #[tauri::command]
@@ -672,6 +713,61 @@ mod tests {
         .err()
         .unwrap();
         assert!(err.contains("호스트가 서버를 켰는지"), "{err}");
+    }
+
+    #[test]
+    fn probe_gets_first_reply_without_joining() {
+        let (host, host_rx) = app_with_events(EV_HOST);
+        let port = free_port();
+        tauri::async_runtime::block_on(async {
+            share_host_start(host.handle().clone(), host.state::<ShareState>(), port, 5)
+                .await
+                .unwrap();
+            let probe = tauri::async_runtime::spawn(share_probe(
+                "127.0.0.1".into(),
+                port,
+                "{\"t\":\"probe\"}".into(),
+            ));
+            let msg = next_kind(&host_rx, "msg");
+            assert_eq!(msg["data"], "{\"t\":\"probe\"}");
+            let peer = msg["peer"].as_str().unwrap().to_string();
+            share_host_send(host.state::<ShareState>(), vec![peer.clone()], "{\"t\":\"info\"}".into())
+                .unwrap();
+            let reply = probe.await.unwrap().unwrap();
+            assert_eq!(reply.as_deref(), Some("{\"t\":\"info\"}"));
+            // 묻고 나면 스스로 닫는다.
+            assert_eq!(next_kind(&host_rx, "close")["peer"], peer.as_str());
+            share_host_stop(host.state::<ShareState>());
+        });
+    }
+
+    #[test]
+    fn probe_without_reply_is_open_but_unknown() {
+        let (host, _rx) = app_with_events(EV_HOST);
+        let port = free_port();
+        tauri::async_runtime::block_on(async {
+            share_host_start(host.handle().clone(), host.state::<ShareState>(), port, 6)
+                .await
+                .unwrap();
+            let reply = share_probe("127.0.0.1".into(), port, "{}".into()).await.unwrap();
+            assert_eq!(reply, None);
+            share_host_stop(host.state::<ShareState>());
+        });
+    }
+
+    #[test]
+    fn probe_closed_port_is_an_error() {
+        let port = free_port();
+        let err = tauri::async_runtime::block_on(share_probe("127.0.0.1".into(), port, "{}".into()))
+            .err()
+            .unwrap();
+        assert!(err.contains("호스트가 서버를 켰는지"), "{err}");
+    }
+
+    #[test]
+    fn ws_url_wraps_ipv6() {
+        assert_eq!(ws_url("10.0.0.5", 8787), "ws://10.0.0.5:8787/lunchpick");
+        assert_eq!(ws_url("::1", 8787), "ws://[::1]:8787/lunchpick");
     }
 
     #[test]
