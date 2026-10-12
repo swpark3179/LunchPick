@@ -1,5 +1,6 @@
 import { useRef } from 'react';
 
+import MyMenuPill from '../components/MyMenuPill';
 import { copyText } from '../lib/ipc';
 import type { Restaurant } from '../lib/types';
 import { agoText, daysAgo, lastAt, priceFmt, uid, won } from '../lib/util';
@@ -342,6 +343,9 @@ export default function ListDrawer() {
             ★ 표시한 메뉴가 목록에 먼저 보여요
           </span>
         </div>
+        <div style={{ fontSize: 11.5, color: MUTED_2, lineHeight: 1.5, marginBottom: 4 }}>
+          ‘늘 먹는’ 메뉴는 같이 고르기에서 이 식당이 확정되면 내 메뉴로 자동으로 골라져요 · 나만 보여요
+        </div>
 
         {L.menus.map((m) =>
           editMenu && editMenu.id === m.id ? (
@@ -469,6 +473,7 @@ export default function ListDrawer() {
                 {m.fav ? '★' : '☆'}
               </button>
               <span style={{ flex: 1, minWidth: 0, fontSize: 14 }}>{m.name}</span>
+              <MyMenuPill restName={L.name} menuName={m.name} />
               <span
                 style={{
                   fontSize: 13.5,

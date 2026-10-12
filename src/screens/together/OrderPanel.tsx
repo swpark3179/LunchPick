@@ -10,7 +10,9 @@
  */
 import { useEffect, useRef, useState } from 'react';
 
+import MyMenuPill from '../../components/MyMenuPill';
 import { copyText } from '../../lib/ipc';
+import { namesFor } from '../../lib/myMenus';
 import type { Restaurant } from '../../lib/types';
 import { hhmm, won } from '../../lib/util';
 import {
@@ -19,12 +21,14 @@ import {
   itemKey,
   itemsSig,
   itemsText,
+  myMenuItems,
   picksText,
   reservationText,
   sumItems,
   totalText,
 } from '../../share/order';
 import { LIMITS, type Member, type OrderItem, type Reservation, type RoomState } from '../../share/protocol';
+import { useData } from '../../store/dataStore';
 import { useShare } from '../../store/shareStore';
 import { toast } from '../../store/uiStore';
 import { AC, AINK, CH, INK, MUTED, MUTED_3, OK_BG, OK_FG, SOFT } from '../../theme';
@@ -46,6 +50,8 @@ import {
 const NONE: OrderItem[] = [];
 /** 보낸 내 메뉴가 이 안에 돌아오지 않으면 방 상태를 따른다 */
 const PICK_SETTLE_MS = 1500;
+/** 늘 먹는 메뉴로 자동으로 담긴 줄을 빛내는 동안 (이보다 늦게 화면에 들어오면 빛내지 않는다) */
+const AUTO_GLOW_MS = 6000;
 
 const AMBER_BG = 'oklch(0.97 0.04 85)';
 const AMBER_FG = 'oklch(0.45 0.1 70)';
@@ -65,6 +71,8 @@ export default function OrderPanel({
   onReserve: () => void;
 }) {
   const act = useShare((s) => s.act);
+  const autoPicked = useShare((s) => s.autoPicked);
+  const myMenus = useData((s) => s.myMenus);
   const f = room.final!;
   const r = room.restaurants.find((x) => x.id === f.restId);
   const v = room.reservation;
@@ -97,7 +105,7 @@ export default function OrderPanel({
     const clean = cleanItems(next, r, LIMITS.pickQty);
     setMine(clean);
     sent.current = itemsSig(clean);
-    act({ type: 'pickMenu', items: clean });
+    act({ type: 'pickMenu', items: clean, final: f.at });
     clearTimeout(settle.current);
     settle.current = setTimeout(() => {
       if (sent.current === null) return;
@@ -125,6 +133,14 @@ export default function OrderPanel({
     commit([...mine, { menuId: null, name, price: null, qty: 1 }]);
     setCustom('');
   };
+
+  // ---------------------------------------------------------------- 늘 먹는 메뉴 (내 PC 에만 있다)
+  const usual = myMenuItems(r, namesFor(myMenus, r.name)).items;
+  /** 늘 먹는 메뉴 중 아직 안 고른 것 — 있으면 '담기' 버튼을 보여준다 */
+  const usualMissing = usual.filter((it) => !mine.some((x) => itemKey(x) === itemKey(it)));
+  const addUsual = () => commit([...mine, ...usualMissing]);
+  const glow =
+    autoPicked && autoPicked.final === f.at && Date.now() - autoPicked.at < AUTO_GLOW_MS ? autoPicked : null;
 
   // ---------------------------------------------------------------- 모두의 메뉴
   // 지금 있는 사람 + 나갔어도 메뉴를 골라 둔 사람. 호스트, 나, 들어온 순서.
@@ -303,6 +319,19 @@ export default function OrderPanel({
             <SectionHead
               title="내 메뉴"
               sub={mine.length ? itemsText(mine) : '먹을 메뉴를 골라 주세요 · 여러 개 골라도 돼요'}
+              right={
+                usualMissing.length ? (
+                  <button
+                    type="button"
+                    className="tg-soft"
+                    title={`늘 먹는 메뉴를 담아요 · ${usualMissing.map((it) => it.name).join(', ')}`}
+                    onClick={addUsual}
+                    style={{ ...btnSoft(28, 10), animation: 'lp-in .3s ease-out' }}
+                  >
+                    늘 먹는 메뉴 담기
+                  </button>
+                ) : null
+              }
             />
             <div style={{ display: 'flex', flexDirection: 'column', marginTop: 6 }}>
               {r.menus.map((m) => {
@@ -313,6 +342,8 @@ export default function OrderPanel({
                     item={base}
                     qty={qtyOf(m.id)}
                     who={others.get(m.id) ?? []}
+                    usual={<MyMenuPill restName={r.name} menuName={m.name} size="sm" />}
+                    glow={glow?.keys.includes(m.id) ? glow.at : null}
                     onQty={(q) => setQty(base, q)}
                   />
                 );
@@ -765,17 +796,24 @@ function MenuRow({
   qty,
   who,
   custom,
+  usual,
+  glow,
   onQty,
 }: {
   item: OrderItem;
   qty: number;
   who: { m: Member; qty: number }[];
   custom?: boolean;
+  /** '늘 먹는' 알약 (식당 메뉴 줄에만) */
+  usual?: React.ReactNode;
+  /** 늘 먹는 메뉴로 자동으로 담긴 줄이면 그 시각 — 바뀔 때마다 한 번 빛난다 */
+  glow?: number | null;
   onQty: (q: number) => void;
 }) {
   const n = who.reduce((a, w) => a + w.qty, 0);
   return (
     <div
+      key={glow ?? 'row'}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -785,6 +823,7 @@ function MenuRow({
         borderRadius: 8,
         background: qty ? SOFT : 'transparent',
         transition: 'background .25s',
+        animation: glow ? 'lp-glow 1.1s ease-in-out 2' : 'none',
       }}
     >
       <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -794,6 +833,7 @@ function MenuRow({
         {custom ? (
           <span style={{ fontSize: 10.5, fontWeight: 700, color: MUTED_3, flex: 'none' }}>직접 입력</span>
         ) : null}
+        {usual}
       </div>
       {who.length ? (
         <span

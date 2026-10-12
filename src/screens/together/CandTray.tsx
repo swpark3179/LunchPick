@@ -1,6 +1,7 @@
 /**
  * 후보 트레이 (시안: 후보 트레이) — 모두가 같이 보는 후보. 누구든 '확정'을 누르면 끝나고,
- * 2곳 이상이면 사다리로 n곳까지 추릴 수 있다.
+ * 2곳 이상이면 사다리로 n곳까지 추리거나, 하트를 걸어 어디를 더 원하는지 모아 볼 수 있다.
+ * 하트 걸기를 마감한 뒤에는 칩마다 받은 하트(♥n)가 남는다.
  */
 import { useState } from 'react';
 
@@ -8,7 +9,7 @@ import { LIMITS, type RoomState } from '../../share/protocol';
 import { useShare } from '../../store/shareStore';
 import { AC, MUTED } from '../../theme';
 import { Stepper } from './Board';
-import { Avatar, IconLadder, IconX, INPUT_BORDER, memberOf } from './parts';
+import { Avatar, IconHeart, IconLadder, IconX, INPUT_BORDER, memberOf } from './parts';
 
 export default function CandTray({
   room,
@@ -30,6 +31,8 @@ export default function CandTray({
   const keepMax = Math.max(1, n - 1);
   const k = Math.min(keep, keepMax);
   const canLadder = n >= 2 && n <= LIMITS.ladderMax && !lock;
+  const canPref = n >= 2 && n <= LIMITS.prefMax && !lock;
+  const tally = room.prefTally;
 
   return (
     <div
@@ -98,6 +101,25 @@ export default function CandTray({
                 >
                   {r.name}
                 </span>
+                {tally && tally[id] !== undefined ? (
+                  <span
+                    key={tally[id]}
+                    title={`하트 걸기 결과 · 하트 ${tally[id]}개`}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 2,
+                      fontSize: 11.5,
+                      fontWeight: 750,
+                      color: tally[id] ? AC : MUTED,
+                      fontVariantNumeric: 'tabular-nums',
+                      animation: 'lp-pop .4s cubic-bezier(.2,.9,.3,1.4)',
+                    }}
+                  >
+                    <IconHeart size={11} color={tally[id] ? AC : 'oklch(0.8 0.01 60)'} />
+                    {tally[id]}
+                  </span>
+                ) : null}
                 <button
                   type="button"
                   className={fin ? '' : 'tg-accent'}
@@ -184,6 +206,35 @@ export default function CandTray({
         >
           <IconLadder size={15} />
           사다리로 {k}곳 추리기
+        </button>
+        <button
+          type="button"
+          className="tg-soft"
+          title={
+            n > LIMITS.prefMax
+              ? `하트 걸기는 후보 ${LIMITS.prefMax}곳 이하에서 할 수 있어요`
+              : `각자 하트 ${LIMITS.prefHearts}개를 후보에 나눠 걸어 어디를 더 원하는지 모아 봐요`
+          }
+          onClick={() => canPref && act({ type: 'pref' })}
+          style={{
+            height: 36,
+            padding: '0 14px',
+            border: `1px solid ${INPUT_BORDER}`,
+            borderRadius: 8,
+            background: 'white',
+            font: 'inherit',
+            fontSize: 13,
+            fontWeight: 650,
+            cursor: canPref ? 'pointer' : 'default',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 7,
+            whiteSpace: 'nowrap',
+            color: canPref ? 'oklch(0.24 0.012 60)' : MUTED,
+          }}
+        >
+          <IconHeart size={15} color={canPref ? AC : MUTED} />
+          하트 걸기
         </button>
       </div>
     </div>

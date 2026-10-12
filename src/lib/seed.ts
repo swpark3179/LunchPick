@@ -63,5 +63,5 @@ export function seed(): AppData {
     restId: rs[i].id,
     at: now - d * DAY,
   }));
-  return { restaurants: rs, history };
+  return { restaurants: rs, history, myMenus: {} };
 }

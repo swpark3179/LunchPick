@@ -13,7 +13,7 @@ import type { Menu, Restaurant } from '../lib/types';
 import { HUES } from '../theme';
 
 /** 호환되지 않게 바뀌면 올린다. 다르면 접속을 거절한다. */
-export const PROTOCOL = 3;
+export const PROTOCOL = 4;
 
 export const LIMITS = {
   name: 12,
@@ -26,6 +26,10 @@ export const LIMITS = {
   aiTop: 5,
   rollMax: 5,
   ladderMax: 8,
+  /** 하트 걸기에 올릴 수 있는 후보 수 */
+  prefMax: 6,
+  /** 하트 걸기에서 한 사람이 가진 하트 수 */
+  prefHearts: 3,
   memo: 200,
   menus: 40,
   menuName: 30,
@@ -109,6 +113,28 @@ export type LadderRun = {
   speed: number;
 };
 
+/**
+ * 하트 걸기 — 열 때의 후보에 각자 하트를 나눠 건다 (한 곳에 몰면 강한 선호). 건 하트는 바로
+ * 모두에게 보이고, 누구든 마감하면 하트 수로 순위가 나온다. 무작위는 없고, 결과는 참고용이라
+ * 어떤 후보든 그대로 확정할 수 있다.
+ */
+export type PrefRun = {
+  id: string;
+  by: string;
+  /** 1부터 — '동점끼리 한 번 더' 를 하면 올라간다 */
+  round: number;
+  /** 열 때 고정한 후보 id (칸 순서) */
+  cands: string[];
+  /** 한 사람이 가진 하트 수 */
+  hearts: number;
+  /** 멤버 id -> 후보별 하트 수 (cands 와 같은 길이). 아직 안 걸었으면 없다. */
+  bets: Record<string, number[]>;
+  /** '아무데나 좋아요' 를 누른 사람 */
+  pass: string[];
+  /** 마감 — 결과를 보는 중이면 누가 언제 마감했는지 */
+  closed: { by: string; at: number } | null;
+};
+
 export type Final = { restId: string; by: string; at: number };
 
 /**
@@ -183,6 +209,9 @@ export type RoomState = {
   ai: AiTurn[];
   roll: Roll | null;
   ladder: LadderRun | null;
+  pref: PrefRun | null;
+  /** 마지막 하트 걸기 결과 (식당 id -> 하트 수) — 닫은 뒤에도 후보 칩에 ♥n 으로 남는다 */
+  prefTally: Record<string, number> | null;
   final: Final | null;
   /** 확정된 식당에서 각자 고른 메뉴 (멤버 id -> 메뉴). 확정이 바뀌거나 풀리면 비운다. */
   picks: Record<string, MenuPick>;
@@ -213,10 +242,19 @@ export type Action =
   | { type: 'ladderAll' }
   | { type: 'ladderApply' }
   | { type: 'ladderClose' }
+  /** 하트 걸기 열기. retie 면 마감된 결과의 공동 1위끼리 한 번 더 */
+  | { type: 'pref'; retie?: boolean }
+  /** 내가 건 하트 전체 (후보 순서). pass 면 '아무데나 좋아요' */
+  | { type: 'prefBet'; id: string; hearts: number[]; pass?: boolean }
+  /** 마감 / 다시 걸기 / 하트 0개 후보 내리기 / 닫기 */
+  | { type: 'prefClose' | 'prefReopen' | 'prefDrop' | 'prefCancel'; id: string }
   | { type: 'final'; restId: string }
   | { type: 'unfinal' }
-  /** 내가 고른 메뉴 전체 (빈 배열이면 비운다) */
-  | { type: 'pickMenu'; items: OrderItem[] }
+  /**
+   * 내가 고른 메뉴 전체 (빈 배열이면 비운다). final 은 고를 때 본 확정 시각 — 그사이 다른 식당으로
+   * 바뀌었으면 호스트가 버린다 (예전 화면은 보내지 않으니 없으면 그대로 받는다).
+   */
+  | { type: 'pickMenu'; items: OrderItem[]; final?: number }
   /** 예약 화면을 열었다(true) / 닫았다(false) */
   | { type: 'reserving'; on: boolean }
   /** 예약 완료 — 이미 예약이 있으면 고친다 */

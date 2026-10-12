@@ -211,6 +211,18 @@ export const IconCrown = ({ size = 16, color = 'oklch(0.72 0.15 75)', style }: I
     <path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 11H5z" />
   </Svg>
 );
+/** 하트 걸기의 하트 — 채운 모양 (색은 건 사람의 아바타 색) */
+export const IconHeart = ({ size = 16, color = AC, style }: IconProps) => (
+  <Svg size={size} fill={color} style={style}>
+    <path d="M12 20.6 4.1 12.9A4.75 4.75 0 0 1 12 6.6a4.75 4.75 0 0 1 7.9 6.3z" />
+  </Svg>
+);
+/** 하트 걸기에서 아직 비어 있는 하트 자리 — 테두리만 */
+export const IconHeartLine = (p: IconProps) => (
+  <Svg stroke={1.8} {...p}>
+    <path d="M12 20.6 4.1 12.9A4.75 4.75 0 0 1 12 6.6a4.75 4.75 0 0 1 7.9 6.3z" />
+  </Svg>
+);
 export const IconPlay = ({ size = 14, style }: IconProps) => (
   <Svg size={size} fill="currentColor" style={style}>
     <path d="M7 4.5v15l12-7.5z" />

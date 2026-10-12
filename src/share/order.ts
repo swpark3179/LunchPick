@@ -49,6 +49,22 @@ export function cleanItems(raw: unknown, rest: Restaurant | undefined, maxQty: n
   return [...out.values()];
 }
 
+/**
+ * 늘 먹는 메뉴(이름들)를 이 식당의 메뉴 줄로 — 메뉴 이름으로 맞춰 각 1개씩 담는다.
+ * 식당 메뉴에 없는 이름은 직접 입력으로 만들지 않고 missing 으로 돌려준다
+ * (다른 사람이 메뉴를 고쳤거나 지웠을 수 있어서, 모두에게 보이는 줄을 멋대로 만들지 않는다).
+ */
+export function myMenuItems(rest: Restaurant, names: readonly string[]) {
+  const items: OrderItem[] = [];
+  const missing: string[] = [];
+  for (const n of names) {
+    const m = rest.menus.find((x) => nameKey(x.name) === nameKey(n));
+    if (m) items.push({ menuId: m.id, name: m.name, price: m.price, qty: 1 });
+    else missing.push(n);
+  }
+  return { items: cleanItems(items, rest, LIMITS.pickQty), missing };
+}
+
 /** 여러 사람이 고른 메뉴를 합친다 — 식당 메뉴 순서대로, 직접 적은 메뉴는 그 뒤에 나온 순서대로. */
 export function sumItems(lists: readonly (readonly OrderItem[])[], rest?: Restaurant): OrderItem[] {
   const m = new Map<string, OrderItem>();

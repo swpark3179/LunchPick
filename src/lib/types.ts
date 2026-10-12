@@ -12,7 +12,14 @@ export type Restaurant = {
 
 export type HistoryEntry = { restId: string; at: number };
 
-export type AppData = { restaurants: Restaurant[]; history: HistoryEntry[] };
+/**
+ * 늘 먹는 메뉴 — '이 식당이면 나는 이 메뉴'. 식당 이름(nameKey) -> 메뉴 이름들.
+ * 내 PC 에만 두는 개인 데이터라 먹은 기록처럼 내보내지도, 같이 고르기로 보내지도 않는다.
+ * 참여자 목록은 호스트와 id 가 달라서 이름으로 맞춘다.
+ */
+export type MyMenus = Record<string, string[]>;
+
+export type AppData = { restaurants: Restaurant[]; history: HistoryEntry[]; myMenus: MyMenus };
 
 export type ModeId = 'elim' | 'cup' | 'ladder' | 'roulette' | 'slot' | 'ai';
 
@@ -64,6 +71,8 @@ export type Settings = {
   animSpeed: AnimSpeed;
   menuPreview: 2 | 3;
   showPrices: boolean;
+  /** 같이 고르기에서 확정되면 늘 먹는 메뉴를 내 메뉴로 자동으로 골라 둔다 */
+  autoMyMenu: boolean;
   /** AI */
   fabrix: FabrixConf;
   fabrixModels: FabrixModel[];
