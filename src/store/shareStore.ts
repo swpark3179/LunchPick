@@ -9,10 +9,12 @@
 import { create } from 'zustand';
 
 import { windowFlash, windowSummon } from '../lib/ipc';
+import { namesFor } from '../lib/myMenus';
 import { mergeRestaurants, nameKey } from '../lib/shareFormat';
 import type { RecentHost } from '../lib/types';
 import { joinRoom, type ClientConn } from '../share/client';
 import { createHostRoom, type HostRoom } from '../share/host';
+import { itemKey, myMenuItems } from '../share/order';
 import {
   type Action,
   cleanName,
@@ -64,6 +66,8 @@ type ShareStore = {
   ended: string | null;
   /** 누군가 나를 불렀다 (부른 사람의 id·짧은 이름). 확인하면 지운다. */
   called: { by: string; name: string } | null;
+  /** 확정됐을 때 늘 먹는 메뉴로 골라 둔 것 — 메뉴 고르기에서 그 줄을 잠깐 빛낸다 */
+  autoPicked: { final: number; at: number; keys: string[] } | null;
 
   startHost: () => Promise<boolean>;
   stopHost: () => Promise<void>;
@@ -116,6 +120,10 @@ const seenAsk = new Set<string>();
 const seenSyncEnd = new Set<string>();
 /** 이미 알린 예약 (예약·수정 시각) */
 const seenReserve = new Set<number>();
+/** 이미 알린 하트 걸기 */
+const seenPref = new Set<string>();
+/** 늘 먹는 메뉴를 이미 골라 본 확정 (식당 id:확정 시각) — 확정마다 한 번만 고른다 */
+const seenFinal = new Set<string>();
 /** 작업표시줄 깜박임을 이미 판단한 마지막 채팅 (처음 받은 상태는 본 것으로 친다) */
 let alertReady = false;
 let lastAlertChat = '';
@@ -128,6 +136,8 @@ const resetEffects = () => {
   seenAsk.clear();
   seenSyncEnd.clear();
   seenReserve.clear();
+  seenFinal.clear();
+  seenPref.clear();
   alertReady = false;
   lastAlertChat = '';
   myCalls.clear();
@@ -155,7 +165,7 @@ function alertChat(room: RoomState, me: string) {
 const removedKey = (r: Removed) => `${r.id}:${r.at}`;
 
 /**
- * 방 상태가 올 때마다: 동기화 요청 알림, 그리고 참여자라면 지운 식당·끝난 동기화를 내 식당
+ * 방 상태가 올 때마다: 동기화 요청·하트 걸기 알림, 그리고 참여자라면 지운 식당·끝난 동기화를 내 식당
  * 목록에 반영한다 (호스트는 방 목록이 곧 내 목록이라 따로 할 게 없다).
  */
 function roomEffects(room: RoomState, me: string, role: ShareRole) {
@@ -168,6 +178,7 @@ function roomEffects(room: RoomState, me: string, role: ShareRole) {
       if (room.sync.end) seenSyncEnd.add(room.sync.id);
     }
     if (room.reservation) seenReserve.add(room.reservation.at);
+    if (room.pref) seenPref.add(room.pref.id);
     return;
   }
 
@@ -191,6 +202,16 @@ function roomEffects(room: RoomState, me: string, role: ShareRole) {
     if (run.by !== me && !inRoom()) {
       const who = shortName(room.members.find((m) => m.id === run.by)?.name ?? '누군가');
       toast(`${who}님이 식당 정보 동기화를 요청했어요 · 같이 고르기에서 답해 주세요`);
+    }
+  }
+
+  // 하트 걸기가 열리면 방 밖에 있는 사람에게 알린다 (방 안에서는 무대가 뜬다).
+  const P = room.pref;
+  if (P && !P.closed && !seenPref.has(P.id)) {
+    seenPref.add(P.id);
+    if (P.by !== me && !inRoom()) {
+      const who = shortName(room.members.find((m) => m.id === P.by)?.name ?? '누군가');
+      toast(`${who}님이 하트 걸기를 열었어요 · 같이 고르기에서 하트를 걸어 주세요`);
     }
   }
   if (role !== 'client') return;
@@ -274,6 +295,42 @@ export const useShare = create<ShareStore>((set, get) => {
     set({ room, myId, unread: inRoom() ? 0 : unreadOf(room, myId) });
     roomEffects(room, myId, get().role);
     alertChat(room, myId);
+    autoPickMine();
+  };
+
+  /**
+   * 식당이 확정되면 늘 먹는 메뉴를 내 메뉴로 골라 둔다 — 확정마다 한 번, 방 화면을 보고 있지 않아도.
+   * 이미 고른 메뉴가 있거나, 예약이 끝났거나, 설정에서 껐으면 건드리지 않는다.
+   * 참여자는 입장하는 동안(연결이 준비되기 전)에는 보낼 수 없어서, 표시하지 않고 접속이 끝난 뒤에 다시 본다.
+   */
+  const autoPickMine = () => {
+    const { room, myId: me, role } = get();
+    const f = room?.final;
+    if (!room || !f || !me || role === 'none') return;
+    const key = `${f.restId}:${f.at}`;
+    if (seenFinal.has(key) || (role === 'client' && !conn)) return;
+    seenFinal.add(key);
+    if (!useSettings.getState().autoMyMenu || room.reservation || room.picks[me]?.items.length) return;
+    const r = room.restaurants.find((x) => x.id === f.restId);
+    const names = r ? namesFor(useData.getState().myMenus, r.name) : [];
+    if (!r || !names.length) return;
+    const { items, missing } = myMenuItems(r, names);
+    if (!items.length) {
+      toast(`늘 먹는 메뉴(${missing.join(', ')})가 ‘${r.name}’ 메뉴에 없어서 골라 두지 못했어요`);
+      return;
+    }
+    // 호스트는 보내는 즉시 방 상태가 바뀌어 여기로 다시 들어오므로 한 박자 미룬다.
+    setTimeout(() => {
+      const cur = get().room;
+      if (get().myId !== me || cur?.final?.at !== f.at || cur.final.restId !== f.restId) return;
+      if (cur.reservation || cur.picks[me]?.items.length) return;
+      get().act({ type: 'pickMenu', items, final: f.at });
+      set({ autoPicked: { final: f.at, at: Date.now(), keys: items.map(itemKey) } });
+      toast(
+        `늘 먹는 메뉴로 골라 뒀어요 · ${items.map((it) => it.name).join(', ')}` +
+          (missing.length ? ` (메뉴에 없는 ${missing.join(', ')}는 뺐어요)` : ''),
+      );
+    }, 0);
   };
 
   /** 누군가 나를 불렀다 — 알림 창을 띄우고 점심픽 창을 한 번 맨 앞으로 올린다. */
@@ -301,6 +358,7 @@ export const useShare = create<ShareStore>((set, get) => {
       focus: {},
       unread: 0,
       called: null,
+      autoPicked: null,
       ...p,
     });
     if (inRoom()) useUi.getState().setView('settings');
@@ -322,6 +380,7 @@ export const useShare = create<ShareStore>((set, get) => {
     unread: 0,
     ended: null,
     called: null,
+    autoPicked: null,
 
     startHost: async () => {
       if (get().role !== 'none') return false;
@@ -457,6 +516,8 @@ export const useShare = create<ShareStore>((set, get) => {
           return false;
         }
         conn = c;
+        // 확정된 뒤에 들어왔으면 — 연결이 생기기 전에 받은 첫 상태로는 메뉴를 보낼 수 없었다.
+        autoPickMine();
         await atLeast(s1, CLIENT_STEP_MS[1]);
         if (my !== token) return false;
         // 3. 식당 정보 받는 중 k/N — 받은 목록 수만큼 센다

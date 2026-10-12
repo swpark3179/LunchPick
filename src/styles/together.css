@@ -1,7 +1,7 @@
 /* 같이 고르기 · 실시간 공유 서버 화면의 애니메이션.
    키프레임은 디자인 시안(같이 고르기.dc.html)에서 그대로 옮겼다 — 이름·값을 바꾸지 말 것.
    일반 전환은 global.css 의 prefers-reduced-motion 규칙을 따르고,
-   무작위 뽑기·사다리처럼 연출 자체가 기능인 부분만 .keep-motion 으로 감싼다. */
+   무작위 뽑기·사다리·하트 걸기처럼 연출 자체가 기능인 부분만 .keep-motion 으로 감싼다. */
 
 @keyframes lp-ping {
   0% {
@@ -172,6 +172,57 @@
   }
   50% {
     opacity: 0.4;
+  }
+}
+
+/* ---------------- 하트 걸기 (시안 밖 — 이 기능을 위해 더한 것) ---------------- */
+/* 남이 건 하트가 위에서 떨어져 통 튀며 앉는다 */
+@keyframes lp-drop {
+  0% {
+    transform: translateY(-28px) scale(0.6);
+    opacity: 0;
+  }
+  55% {
+    transform: translateY(2px) scale(1.08);
+    opacity: 1;
+  }
+  75% {
+    transform: translateY(-3px) scale(0.97);
+  }
+  100% {
+    transform: none;
+    opacity: 1;
+  }
+}
+/* 아직 걸 하트가 남았을 때 두근거린다 */
+@keyframes lp-beat {
+  0%,
+  60%,
+  100% {
+    transform: scale(1);
+  }
+  15% {
+    transform: scale(1.12);
+  }
+  30% {
+    transform: scale(0.98);
+  }
+  45% {
+    transform: scale(1.06);
+  }
+}
+/* 1위의 하트 터짐 — 조각마다 --dx·--dy 만큼 퍼지며 사라진다 */
+@keyframes lp-burst {
+  0% {
+    transform: translate(-50%, -50%) scale(0.3);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1);
+    opacity: 0;
   }
 }
 

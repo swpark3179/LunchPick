@@ -4,7 +4,7 @@
  * 호스트 PC 의 프론트엔드가 방 상태의 유일한 주인이다. 참여자의 Action 과 호스트 자신의
  * Action 이 모두 `act()` 를 지나가고, 바뀐 상태는 곧바로 호스트 화면에, 잠시 모아서
  * 참여자들에게 방송된다. 무작위 뽑기는 연출 시간표(anim.ts)가 끝나면 확정하고,
- * 사다리는 누구든 출발·결과 적용을 누를 때 진행한다.
+ * 사다리·하트 걸기는 누구든 출발·마감·결과 적용을 누를 때 진행한다.
  */
 import { ERR_NO_CREDS, fabrixChat, type ChatTurn } from '../lib/ipc';
 import { mergeRestaurants, sanitizeRestaurants } from '../lib/shareFormat';
@@ -32,6 +32,7 @@ import {
 } from './anim';
 import { genLadder, ladderWinners } from './ladder';
 import { cleanItems, itemsText } from './order';
+import { betSum, cleanBet, summaryText, topTie, totals, zeroIds } from './pref';
 import {
   type Action,
   type AiTurn,
@@ -43,6 +44,7 @@ import {
   LIMITS,
   type LadderRun,
   type Member,
+  type PrefRun,
   PROTOCOL,
   type Removed,
   type RoomState,
@@ -143,6 +145,8 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     ai: [],
     roll: null,
     ladder: null,
+    pref: null,
+    prefTally: null,
     final: null,
     picks: {},
     reservation: null,
@@ -264,7 +268,9 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
       Object.fromEntries(Object.entries(o).filter(([k]) => ids.has(k)));
     update((s) => {
       const final = s.final && ids.has(s.final.restId) ? s.final : null;
-      return {
+      // 하트 걸기에 올라간 식당이 사라지면 칸이 어긋나니 하트 걸기를 닫는다.
+      const prefGone = !!s.pref && !s.pref.cands.every((id) => ids.has(id));
+      const next: RoomState = {
         ...s,
         restaurants: d.restaurants,
         dislikes: keep(s.dislikes),
@@ -273,10 +279,15 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
         reasons: keep(s.reasons),
         edited: keep(s.edited),
         order: s.order.filter((id) => ids.has(id)),
+        pref: prefGone ? null : s.pref,
+        prefTally: s.prefTally ? keep(s.prefTally) : null,
         final,
         // 확정된 식당이 사라지면 그 식당의 메뉴·예약도 함께 사라진다.
         ...(final ? {} : { picks: {}, reservation: null, reserving: null }),
       };
+      return prefGone
+        ? withSys(next, '하트 걸기에 올라간 식당이 목록에서 빠져서 하트 걸기를 닫았어요')
+        : next;
     });
   });
 
@@ -305,7 +316,7 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     send(peers, { t: 'err', msg });
   };
 
-  /** 확정됐거나 뽑는 중이면 고르기 조작을 막는다. */
+  /** 확정됐거나 뽑는 중이거나 하트를 거는 중이면 고르기 조작을 막는다. */
   const blocked = (by: string) => {
     if (state.final) {
       reject(by, '확정을 풀면 다시 고를 수 있어요.');
@@ -313,6 +324,10 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     }
     if (rolling()) {
       reject(by, '무작위로 뽑는 중이에요. 끝나면 다시 해 주세요.');
+      return true;
+    }
+    if (state.pref) {
+      reject(by, '하트 걸기 중이에요 · 끝나거나 닫은 뒤에 해 주세요.');
       return true;
     }
     return false;
@@ -494,6 +509,128 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
       const names = winners.map((id) => s.restaurants.find((r) => r.id === id)?.name).join(', ');
       return withSys({ ...s, cands, ladder: null }, `사다리 결과 · ${names} 남았어요`, by);
     });
+  };
+
+  // ------------------------------------------------------------ 하트 걸기 (같이 보고 각자 건다)
+
+  /** 지금 열린 하트 걸기 — 다른 판(id)에 보낸 요청이면 null */
+  const prefOf = (id: unknown) => (state.pref && state.pref.id === String(id) ? state.pref : null);
+
+  const openPref = (by: string, retie: boolean) => {
+    if (state.final) return reject(by, '확정을 풀면 다시 고를 수 있어요.');
+    if (rolling()) return reject(by, '무작위로 뽑는 중이에요. 끝나면 다시 해 주세요.');
+    if (state.ladder) return reject(by, '사다리를 닫은 뒤에 하트를 걸어 주세요.');
+    const P = state.pref;
+    let cands: string[];
+    if (retie) {
+      // 마감된 결과의 공동 1위끼리 — 같은 사람들이 그 후보들만 놓고 다시 건다.
+      if (!P?.closed) return;
+      cands = topTie(P);
+      if (cands.length < 2) return reject(by, '1위가 동점일 때만 한 번 더 할 수 있어요.');
+    } else {
+      if (P) return;
+      cands = candOrder();
+      if (cands.length < 2) return reject(by, '후보가 2곳 이상이어야 하트를 걸 수 있어요.');
+      if (cands.length > LIMITS.prefMax)
+        return reject(by, `하트 걸기는 후보 ${LIMITS.prefMax}곳 이하에서 할 수 있어요.`);
+    }
+    const run: PrefRun = {
+      id: uid(),
+      by,
+      round: P && retie ? P.round + 1 : 1,
+      cands,
+      hearts: LIMITS.prefHearts,
+      bets: {},
+      pass: [],
+      closed: null,
+    };
+    update((s) =>
+      withSys(
+        { ...s, pref: run, prefTally: null },
+        retie
+          ? `${nm(by)}님이 공동 1위끼리 한 번 더 걸어요 · ${cands.map(rname).join(', ')}`
+          : `${nm(by)}님이 하트 걸기를 열었어요 · 후보 ${cands.length}곳에 하트 ${run.hearts}개씩`,
+        by,
+      ),
+    );
+  };
+
+  /** 내 하트를 통째로 바꾼다. 누를 때마다 오므로 채팅에는 남기지 않는다. */
+  const betPref = (by: string, id: unknown, raw: unknown, pass: boolean) => {
+    const P = prefOf(id);
+    if (!P || P.closed) return;
+    const bet = pass ? P.cands.map(() => 0) : cleanBet(raw, P);
+    if (!bet) return;
+    const empty = !betSum(bet);
+    const was = P.bets[by];
+    if (pass === P.pass.includes(by) && (was ? was.join() === bet.join() : empty)) return;
+    update((s) => {
+      if (s.pref?.id !== P.id) return s;
+      const bets = { ...s.pref.bets };
+      if (empty) delete bets[by];
+      else bets[by] = bet;
+      const others = s.pref.pass.filter((x) => x !== by);
+      return { ...s, pref: { ...s.pref, bets, pass: pass ? [...others, by] : others } };
+    });
+  };
+
+  /** 마감 — 하트 수로 순위가 드러난다. 결과는 후보 칩에도 ♥n 으로 남는다. */
+  const closePref = (by: string, id: unknown) => {
+    const P = prefOf(id);
+    if (!P || P.closed) return;
+    const t = totals(P);
+    const tally = Object.fromEntries(P.cands.map((c, i) => [c, t[i]]));
+    update((s) =>
+      withSys(
+        { ...s, pref: { ...P, closed: { by, at: Date.now() } }, prefTally: tally },
+        `${nm(by)}님이 하트 걸기를 마감했어요 · ${summaryText(P, rname)}`,
+        by,
+      ),
+    );
+  };
+
+  /** 다시 걸기 — 건 하트는 그대로 두고 마감만 푼다. */
+  const reopenPref = (by: string, id: unknown) => {
+    const P = prefOf(id);
+    if (!P?.closed) return;
+    update((s) =>
+      withSys(
+        { ...s, pref: { ...P, closed: null }, prefTally: null },
+        `${nm(by)}님이 다시 걸기를 열었어요 · 건 하트는 그대로예요`,
+        by,
+      ),
+    );
+  };
+
+  /** 하트를 하나도 못 받은 후보를 내리고 닫는다. */
+  const dropPref = (by: string, id: unknown) => {
+    const P = prefOf(id);
+    if (!P?.closed) return;
+    const zero = zeroIds(P);
+    if (!zero.length) return;
+    update((s) => {
+      const cands = { ...s.cands };
+      zero.forEach((c) => delete cands[c]);
+      return withSys(
+        { ...s, cands, pref: null },
+        `${nm(by)}님이 하트를 못 받은 ${zero.length}곳을 후보에서 내렸어요 · ${zero.map(rname).join(', ')}`,
+        by,
+      );
+    });
+  };
+
+  const cancelPref = (by: string, id: unknown) => {
+    const P = prefOf(id);
+    if (!P) return;
+    update((s) =>
+      withSys(
+        { ...s, pref: null },
+        P.closed
+          ? `${nm(by)}님이 하트 걸기를 닫았어요 · 결과는 후보에 ♥로 남아요`
+          : `${nm(by)}님이 하트 걸기를 그만뒀어요`,
+        by,
+      ),
+    );
   };
 
   // ------------------------------------------------------------ AI 정렬 (대기열)
@@ -764,7 +901,7 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     update((s) =>
       withSys(
         // 다른 식당으로 바꾸면 고르던 메뉴는 비운다.
-        { ...s, final: { restId, by, at: since }, ladder: null, picks: {}, reserving: null },
+        { ...s, final: { restId, by, at: since }, ladder: null, pref: null, picks: {}, reserving: null },
         `${nm(by)}님이 ‘${r.name}’ 최종 확정했어요 · 이제 각자 메뉴를 골라요`,
         by,
       ),
@@ -789,9 +926,11 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
   const finalRest = () => (state.final ? restOf(state.final.restId) : undefined);
 
   /** 내가 고른 메뉴 전체를 바꾼다. 스테퍼를 누를 때마다 오므로 채팅에는 남기지 않는다. */
-  const pickMenu = (by: string, raw: unknown) => {
+  const pickMenu = (by: string, raw: unknown, seen: unknown) => {
     const r = finalRest();
     if (!r) return reject(by, '먼저 식당을 확정해 주세요.');
+    // 고르는 사이에 다른 식당으로 다시 확정됐으면, 예전 식당에서 고른 메뉴는 버린다.
+    if (seen !== undefined && Number(seen) !== state.final?.at) return;
     const items = cleanItems(raw, r, LIMITS.pickQty);
     update((s) => {
       const picks = { ...s.picks };
@@ -908,6 +1047,8 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     if (rolling()) return reject(by, '무작위로 뽑는 중이에요. 끝나면 다시 해 주세요.');
     if (state.ladder?.cands.includes(id))
       return reject(by, '사다리에 올라간 식당이에요. 사다리를 닫은 뒤에 지워 주세요.');
+    if (state.pref?.cands.includes(id))
+      return reject(by, '하트 걸기에 올라간 식당이에요. 하트 걸기를 닫은 뒤에 지워 주세요.');
     // 데이터 구독이 방 상태(가기 싫은 곳·후보·순서 …)를 정리해 방송한다.
     useData.getState().apply((d) => ({ ...d, restaurants: d.restaurants.filter((x) => x.id !== id) }));
     // 참여자들은 이 기록을 보고 각자 목록에서도 지운다 (shareStore).
@@ -1105,6 +1246,24 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
       case 'ladderClose':
         if (state.ladder) update((s) => ({ ...s, ladder: null }));
         return;
+      case 'pref':
+        openPref(by, a.retie === true);
+        return;
+      case 'prefBet':
+        betPref(by, a.id, a.hearts, a.pass === true);
+        return;
+      case 'prefClose':
+        closePref(by, a.id);
+        return;
+      case 'prefReopen':
+        reopenPref(by, a.id);
+        return;
+      case 'prefDrop':
+        dropPref(by, a.id);
+        return;
+      case 'prefCancel':
+        cancelPref(by, a.id);
+        return;
       case 'final':
         finalize(by, String(a.restId));
         return;
@@ -1112,7 +1271,7 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
         unfinalize(by);
         return;
       case 'pickMenu':
-        pickMenu(by, a.items);
+        pickMenu(by, a.items, a.final);
         return;
       case 'reserving':
         setReserving(by, a.on === true);
@@ -1300,6 +1459,13 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
       }
       const picks = { ...s.picks };
       delete picks[memberId];
+      // 내보낸 사람이 건 하트도 함께 뺀다.
+      let pref = s.pref;
+      if (pref) {
+        const bets = { ...pref.bets };
+        delete bets[memberId];
+        pref = { ...pref, bets, pass: pref.pass.filter((x) => x !== memberId) };
+      }
       return withSys(
         {
           ...s,
@@ -1307,6 +1473,7 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
           dislikes,
           exclOrder: s.exclOrder.filter((id) => dislikes[id]),
           picks,
+          pref,
           reserving: s.reserving?.by === memberId ? null : s.reserving,
         },
         `${name}님을 내보냈어요`,

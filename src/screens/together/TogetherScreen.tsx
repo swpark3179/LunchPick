@@ -5,10 +5,12 @@
  *   │ 가기 싫은 곳 │ 남은 식당 (무작위 · AI 정렬 · 카드) · 후보 트레이 │ 참여자 · 채팅 │
  *   └─────────────────────────────────────────────────────────────────────┘
  * 확정되면 가운데 열은 메뉴 고르기 · 예약(OrderPanel)으로 바뀐다.
+ * 하트 걸기가 열리면 가기 싫은 곳 열과 보드 자리를 무대(PrefStage)가 덮는다.
  * 사이드바는 접히고(Sidebar), 방은 아래에서 떠오른다(lp-rise).
  */
 import { useCallback, useEffect, useState } from 'react';
 
+import { isDone } from '../../share/pref';
 import type { RoomState } from '../../share/protocol';
 import { reservationAuthor, shortName } from '../../share/protocol';
 import { useShare } from '../../store/shareStore';
@@ -23,6 +25,7 @@ import InfoDrawer from './InfoDrawer';
 import LadderModal from './LadderModal';
 import OrderPanel from './OrderPanel';
 import { IconBack, IconCheck, IconSync, StatusDot } from './parts';
+import PrefStage from './PrefStage';
 import ReservedModal from './ReservedModal';
 import ReserveModal from './ReserveModal';
 import SyncBanner from './SyncBanner';
@@ -87,7 +90,7 @@ function Room({ room }: { room: RoomState }) {
     : 0;
 
   // Esc: 예약 화면 → 예약 알림 → 확정 화면 → AI 큐 팝업 → 식당 정보 순으로 닫는다
-  // (사다리는 모두의 화면이라 ✕ 로만 닫는다).
+  // (사다리·하트 걸기는 모두의 화면이라 ✕ 로만 닫는다).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
@@ -298,6 +301,10 @@ function Room({ room }: { room: RoomState }) {
         )}
         <ChatPanel room={room} me={me} host={host} detail={detail} />
         <SyncBanner room={room} me={me} host={host} />
+        {/* 하트 걸기는 가운데(가기 싫은 곳 + 보드)만 덮는다 — 채팅·참여자는 그대로 쓴다 */}
+        {room.pref && !room.final ? (
+          <PrefStage key={room.pref.id} room={room} me={me} onInfo={setDetail} />
+        ) : null}
       </div>
 
       <InfoDrawer room={room} id={detail} host={host} hostShort={hostShort} onClose={() => setDetail(null)} />
@@ -324,11 +331,26 @@ function Steps({ room }: { room: RoomState }) {
   const people = room.members.filter((m) => m.online || room.picks[m.id]?.items.length);
   const picked = people.filter((m) => room.picks[m.id]?.items.length).length;
   const res = room.reservation;
-  const at = res ? 5 : room.final ? 4 : room.ladder || candCount >= 2 ? 2 : exclCount || candCount ? 1 : 0;
+  const pref = room.pref;
+  const at = res
+    ? 5
+    : room.final
+      ? 4
+      : pref || room.ladder || candCount >= 2
+        ? 2
+        : exclCount || candCount
+          ? 1
+          : 0;
+  const prefOnline = room.members.filter((m) => m.online);
+  const prefText = pref
+    ? pref.closed
+      ? '♥ 결과'
+      : `♥ ${prefOnline.filter((m) => isDone(pref, m.id)).length}/${prefOnline.length}`
+    : '';
   const steps: [string, string][] = [
     ['가기 싫은 곳 빼기', exclCount ? String(exclCount) : ''],
     ['후보 올리기', candCount ? String(candCount) : ''],
-    ['추려내기', ''],
+    ['추려내기', prefText],
     ['최종 확정', finalName],
     ['메뉴 고르기', room.final ? `${picked}/${people.length}` : ''],
     ['예약 완료', res ? shortName(room.members.find((m) => m.id === res.by)?.name ?? '') : ''],

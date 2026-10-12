@@ -37,5 +37,18 @@ export const LADDER_PATH_MS = 1400;
 export const LADDER_REVEAL_MS = 1450;
 export const LADDER_STAGGER_MS = 280;
 
+/**
+ * 하트 걸기 — 화면 연출만 (호스트는 기다리지 않는다). 각자 설정의 애니메이션 속도를 곱한다.
+ * 내 하트가 트레이와 칸 사이를 날아가는 시간, 남이 건 하트가 떨어져 앉는 시간, 마감 뒤 칸이 순위 자리로
+ * 옮겨 가는 시간, 순위 배지가 하나씩 튀어나오는 간격, 1위의 하트 터짐.
+ */
+export const PREF_FLY_MS = 560;
+export const PREF_DROP_MS = 520;
+export const PREF_SORT_MS = 700;
+export const PREF_STAGGER_MS = 160;
+export const PREF_BURST_MS = 1300;
+/** 시소가 기울며 출렁이는 시간 (후보가 2곳일 때) */
+export const PREF_TILT_MS = 850;
+
 /** AI 정렬 뒤 ▲▼ 표시를 남겨 두는 시간 */
 export const DELTA_HOLD_MS = 3200;

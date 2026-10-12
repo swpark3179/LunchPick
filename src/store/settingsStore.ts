@@ -26,6 +26,7 @@ export const DEFAULTS: Settings = {
   animSpeed: '보통',
   menuPreview: 3,
   showPrices: true,
+  autoMyMenu: true,
   fabrix: { endpointUrl: '', prefixPath: 'openapi/llm', modelId: '16' },
   fabrixModels: [],
 };
@@ -78,6 +79,7 @@ function persistable(s: SettingsState): Settings {
     animSpeed: s.animSpeed,
     menuPreview: s.menuPreview,
     showPrices: s.showPrices,
+    autoMyMenu: s.autoMyMenu,
     fabrix: s.fabrix,
     fabrixModels: s.fabrixModels,
   };

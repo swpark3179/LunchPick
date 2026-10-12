@@ -5,6 +5,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 
+import MyMenuPill from '../../components/MyMenuPill';
 import { copyText } from '../../lib/ipc';
 import type { Restaurant } from '../../lib/types';
 import { fmtPhone, uid } from '../../lib/util';
@@ -299,7 +300,14 @@ export default function InfoDrawer({
                 ) : null}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <div style={{ ...label, marginBottom: 6 }}>메뉴 {r.menus.length}개</div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+                  <span style={label}>메뉴 {r.menus.length}개</span>
+                  {r.menus.length ? (
+                    <span style={{ fontSize: 11, color: 'oklch(0.58 0.01 60)' }}>
+                      ‘늘 먹는’은 내 PC에만 저장 · 확정되면 자동으로 골라져요
+                    </span>
+                  ) : null}
+                </div>
                 {r.menus.length ? (
                   r.menus.map((m) => (
                     <div
@@ -313,6 +321,7 @@ export default function InfoDrawer({
                       }}
                     >
                       <span style={{ flex: 1, fontSize: 13.5 }}>{m.name}</span>
+                      <MyMenuPill restName={r.name} menuName={m.name} size="sm" />
                       <span
                         style={{
                           fontSize: 13,

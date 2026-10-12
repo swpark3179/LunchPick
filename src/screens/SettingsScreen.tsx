@@ -497,6 +497,26 @@ export default function SettingsScreen() {
               <Toggle on={s.showPrices} />
               목록과 결과에 메뉴 가격을 함께 보여주기
             </div>
+            <span style={rowLabel}>늘 먹는 메뉴</span>
+            <div
+              role="button"
+              tabIndex={0}
+              title="식당 목록의 메뉴에서 ‘늘 먹는’을 켜 두면 돼요 · 내 PC에만 저장되고 공유·내보내기 되지 않아요"
+              onClick={() => s.patch({ autoMyMenu: !s.autoMyMenu })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') s.patch({ autoMyMenu: !s.autoMyMenu });
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
+            >
+              <Toggle on={s.autoMyMenu} />
+              같이 고르기에서 확정되면 늘 먹는 메뉴를 자동으로 골라 두기
+            </div>
           </div>
         </div>
 
