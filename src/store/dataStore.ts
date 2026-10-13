@@ -2,15 +2,16 @@ import { create } from 'zustand';
 
 import { loadData, saveData } from '../lib/ipc';
 import { cleanMyMenus, followRenames, toggled, withNames } from '../lib/myMenus';
-import { seed } from '../lib/seed';
 import type { AppData, Restaurant } from '../lib/types';
 import { toastError } from './uiStore';
 
 const SAVE_DEBOUNCE_MS = 400;
 
+const emptyData = (): AppData => ({ restaurants: [], history: [], myMenus: {} });
+
 type DataState = AppData & {
   ready: boolean;
-  /** 앱 시작 시 디스크에서 불러오고, 없으면 샘플 데이터를 심는다. */
+  /** 앱 시작 시 디스크에서 불러오고, 없으면 빈 데이터로 시작한다. */
   init: () => Promise<void>;
   /** 모든 변경은 이 함수를 통과한다 — 자동 저장이 걸려 있다. */
   apply: (fn: (d: AppData) => AppData) => void;
@@ -21,8 +22,7 @@ type DataState = AppData & {
   toggleMyMenu: (restName: string, menuName: string) => void;
   /** 이 식당의 늘 먹는 메뉴를 통째로 바꾼다 (빈 배열이면 지운다) */
   setMyMenus: (restName: string, names: readonly string[]) => void;
-  reset: () => void;
-  /** 식당과 먹은 기록·늘 먹는 메뉴를 모두 지운다 (샘플 데이터도 남기지 않는다). */
+  /** 식당과 먹은 기록·늘 먹는 메뉴를 모두 지운다. */
   clear: () => void;
 };
 
@@ -53,12 +53,12 @@ export const useData = create<DataState>((set, get) => ({
               history: Array.isArray(loaded.history) ? loaded.history : [],
               myMenus: cleanMyMenus(loaded.myMenus),
             }
-          : seed();
-      // 처음 실행이면 샘플 데이터를 바로 디스크에 쓴다.
+          : emptyData();
+      // 처음 실행이면 빈 데이터를 바로 디스크에 쓴다.
       if (!loaded) await saveData(data);
     } catch (e) {
       toastError(e);
-      data = seed();
+      data = emptyData();
     }
     set({ ...data, ready: true });
   },
@@ -84,7 +84,5 @@ export const useData = create<DataState>((set, get) => ({
   setMyMenus: (restName, names) =>
     get().apply((d) => ({ ...d, myMenus: withNames(d.myMenus, restName, names) })),
 
-  reset: () => get().apply(() => seed()),
-
-  clear: () => get().apply(() => ({ restaurants: [], history: [], myMenus: {} })),
+  clear: () => get().apply(emptyData),
 }));
