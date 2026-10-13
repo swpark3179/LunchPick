@@ -6,13 +6,13 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { copyText } from '../../lib/ipc';
-import { won } from '../../lib/util';
-import { cleanItems, itemKey, sumItems, totalText } from '../../share/order';
+import { choiceName, choiceOf, reserveBase } from '../../share/doran';
+import { cleanItems, totalText } from '../../share/order';
 import { LIMITS, type OrderItem, type RoomState, reservationAuthor } from '../../share/protocol';
 import { useShare } from '../../store/shareStore';
 import { toast } from '../../store/uiStore';
 import { AC, INK, MUTED, MUTED_3 } from '../../theme';
-import { Stepper } from './Board';
+import ItemsEditor from './ItemsEditor';
 import { IconPhone, IconX, INPUT_BORDER, btnAccent, btnSoft, whoShort } from './parts';
 
 const AMBER_BG = 'oklch(0.97 0.04 85)';
@@ -32,16 +32,14 @@ export default function ReserveModal({
   const act = useShare((s) => s.act);
   const r = room.final ? room.restaurants.find((x) => x.id === room.final!.restId) : undefined;
   const v = room.reservation;
-  const sumNow = () =>
-    sumItems(
-      Object.values(room.picks).map((p) => p.items),
-      r,
-    ).map((it) => ({ ...it, qty: Math.min(it.qty, LIMITS.reserveQty) }));
+  const doran = room.kind === 'doran';
+  const choice = doran && room.final?.choiceId ? choiceOf(room, room.final.choiceId) : undefined;
+  // 처음 채울 메뉴 — 점심은 모두가 고른 메뉴의 합, 도란식사는 확정된 선택지의 메뉴
+  const sumNow = () => reserveBase(room, r);
 
   // 고치는 중이면 예약 내용으로, 처음이면 모두가 고른 메뉴로 채운다.
   const [rows, setRows] = useState<OrderItem[]>(() => (v ? v.items : sumNow()));
   const [note, setNote] = useState(v?.note ?? '');
-  const [custom, setCustom] = useState('');
   /** 열 때 있던 예약 — 그사이 다른 사람이 예약했는지 알아보는 데 쓴다 */
   const startAt = useRef(v?.at ?? null);
 
@@ -59,33 +57,7 @@ export default function ReserveModal({
   // 고칠 수 없는 사람에게는 '예약 수정'으로 바꿔 보이지 않는다 (위 안내로 알린다).
   const editing = !!v && !blocked;
   const live = rows.filter((it) => it.qty > 0);
-  const keys = new Set(rows.map(itemKey));
-  const addable = r.menus.filter((m) => !keys.has(m.id));
-  const hasPicks = Object.values(room.picks).some((p) => p.items.length);
-
-  const setQty = (k: string, q: number) =>
-    setRows((rs) => rs.map((it) => (itemKey(it) === k ? { ...it, qty: q } : it)));
-  const remove = (k: string) => setRows((rs) => rs.filter((it) => itemKey(it) !== k));
-  const add = (it: OrderItem) =>
-    setRows((rs) => {
-      if (rs.length >= LIMITS.orderItems) {
-        toast(`메뉴는 ${LIMITS.orderItems}가지까지 담을 수 있어요`);
-        return rs;
-      }
-      // 이름이 식당 메뉴와 같으면 그 메뉴로 맞춘다 (가격도 따라온다).
-      const [clean] = cleanItems([it], r, LIMITS.reserveQty);
-      if (!clean) return rs;
-      const k = itemKey(clean);
-      return rs.some((x) => itemKey(x) === k)
-        ? rs.map((x) => (itemKey(x) === k ? { ...x, qty: Math.min(LIMITS.reserveQty, x.qty + 1) } : x))
-        : [...rs, clean];
-    });
-  const addCustom = () => {
-    const name = custom.trim();
-    if (!name) return;
-    add({ menuId: null, name, price: null, qty: 1 });
-    setCustom('');
-  };
+  const hasPicks = doran ? !!choice?.items.length : Object.values(room.picks).some((p) => p.items.length);
 
   const submit = () => {
     if (blocked) return;
@@ -144,7 +116,9 @@ export default function ReserveModal({
             <span style={{ fontSize: 12, fontWeight: 750, color: AC }}>
               {editing ? '예약 수정' : '예약하기'}
             </span>
-            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em' }}>{r.name}</span>
+            <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em' }}>
+              {choice ? `${r.name} · ${choiceName(choice)}` : r.name}
+            </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <IconPhone size={14} color={AC} />
               <span
@@ -233,8 +207,12 @@ export default function ReserveModal({
             {startAt.current !== null
               ? '지금 예약 내용이에요. 다시 예약한 대로 고친 뒤 알려 주세요.'
               : hasPicks
-                ? '모두가 고른 메뉴로 채워 뒀어요. 실제로 예약한 대로 고쳐 주세요.'
-                : '아직 고른 메뉴가 없어요. 예약한 메뉴를 담아 주세요.'}
+                ? doran
+                  ? '선택지의 메뉴로 채워 뒀어요. 실제로 예약한 대로 고쳐 주세요.'
+                  : '모두가 고른 메뉴로 채워 뒀어요. 실제로 예약한 대로 고쳐 주세요.'
+                : doran
+                  ? '선택지에 정한 메뉴가 없어요. 예약한 메뉴를 담아 주세요.'
+                  : '아직 고른 메뉴가 없어요. 예약한 메뉴를 담아 주세요.'}
             {hasPicks ? (
               <span
                 role="button"
@@ -245,146 +223,12 @@ export default function ReserveModal({
                 }}
                 style={{ marginLeft: 6, color: AC, fontWeight: 650, cursor: 'pointer', whiteSpace: 'nowrap' }}
               >
-                모두가 고른 메뉴로 다시 채우기
+                {doran ? '선택지 메뉴로 다시 채우기' : '모두가 고른 메뉴로 다시 채우기'}
               </span>
             ) : null}
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {rows.map((it) => {
-              const k = itemKey(it);
-              return (
-                <div
-                  key={k}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    padding: '6px 0',
-                    borderBottom: '1px solid oklch(0.95 0.005 75)',
-                    opacity: it.qty ? 1 : 0.45,
-                    transition: 'opacity .2s',
-                    animation: 'lp-in .25s ease-out',
-                  }}
-                >
-                  <span
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      fontSize: 13.5,
-                      fontWeight: 600,
-                      overflowWrap: 'anywhere',
-                    }}
-                  >
-                    {it.name}
-                    {it.menuId ? null : (
-                      <span style={{ fontSize: 10.5, fontWeight: 700, color: MUTED_3, marginLeft: 6 }}>
-                        직접 입력
-                      </span>
-                    )}
-                  </span>
-                  <span
-                    style={{
-                      width: 76,
-                      textAlign: 'right',
-                      fontSize: 12.5,
-                      color: it.price ? 'oklch(0.42 0.012 60)' : MUTED_3,
-                      fontVariantNumeric: 'tabular-nums',
-                      flex: 'none',
-                    }}
-                  >
-                    {it.price ? won(it.price * Math.max(1, it.qty)) : '가격 미정'}
-                  </span>
-                  <Stepper
-                    value={it.qty}
-                    min={0}
-                    max={LIMITS.reserveQty}
-                    onChange={(q) => setQty(k, q)}
-                    h={30}
-                    w={26}
-                  />
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    title="빼기"
-                    className="tg-danger"
-                    onClick={() => remove(k)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') remove(k);
-                    }}
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 6,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'pointer',
-                      color: 'oklch(0.5 0.17 25)',
-                      flex: 'none',
-                    }}
-                  >
-                    <IconX size={12} />
-                  </div>
-                </div>
-              );
-            })}
-            {!rows.length ? (
-              <div style={{ fontSize: 12.5, color: MUTED_3, padding: '8px 0' }}>담은 메뉴가 없어요</div>
-            ) : null}
-          </div>
-
-          {addable.length ? (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {addable.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  className="tg-soft"
-                  onClick={() => add({ menuId: m.id, name: m.name, price: m.price, qty: 1 })}
-                  style={{ ...btnSoft(28, 10), fontSize: 12.5, fontWeight: 600 }}
-                >
-                  + {m.name}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input
-              className="tg-input"
-              value={custom}
-              maxLength={LIMITS.menuName}
-              onChange={(e) => setCustom(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  addCustom();
-                }
-              }}
-              placeholder="목록에 없는 메뉴 직접 적기"
-              style={{
-                flex: 1,
-                minWidth: 0,
-                height: 34,
-                border: `1px solid ${INPUT_BORDER}`,
-                borderRadius: 8,
-                padding: '0 10px',
-                font: 'inherit',
-                fontSize: 13,
-                outline: 'none',
-                color: INK,
-                background: 'white',
-              }}
-            />
-            <button
-              type="button"
-              className={custom.trim() ? 'tg-soft' : ''}
-              onClick={addCustom}
-              style={{ ...btnSoft(34, 12), opacity: custom.trim() ? 1 : 0.5 }}
-            >
-              추가
-            </button>
-          </div>
+          <ItemsEditor rows={rows} setRows={setRows} rest={r} maxQty={LIMITS.reserveQty} />
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <span style={{ fontSize: 12.5, fontWeight: 700, color: 'oklch(0.38 0.012 60)' }}>특이사항</span>

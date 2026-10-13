@@ -10,19 +10,23 @@
 //!
 //! `gen` 은 프론트가 시작할 때 넘겨주는 세션 번호다. 서버를 껐다 켜거나 다시 접속했을 때
 //! 늦게 도착한 이전 세션의 이벤트를 프론트가 걸러내는 데 쓴다.
+//!
+//! 앱이 꺼질 때(`shutdown`, lib.rs 의 `RunEvent::Exit`) 프론트는 이미 사라졌을 수 있다. 그래서 서버를 켤 때
+//! 프론트가 '유언'(참여자에게 보낼 작별 인사 텍스트)을 미리 맡겨 두고, 꺼질 때 Rust 가 그걸 보낸 뒤 연결을 닫는다.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime, State};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot, watch};
-use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_tungstenite::tungstenite::protocol::{CloseFrame, WebSocketConfig};
 use tokio_tungstenite::tungstenite::{self, Message};
 
 /// 메시지 하나의 최대 크기. 방 상태 전체(식당 수십 곳 + 채팅 200개)가 수십 KB 라 넉넉하다.
@@ -33,6 +37,8 @@ const CLOSE_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
 /// 방 찾기는 목록의 방들을 한꺼번에 확인하므로 접속보다 짧게 기다린다.
 const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_millis(2500);
 const PROBE_REPLY_TIMEOUT: Duration = Duration::from_millis(1200);
+/// 앱이 꺼질 때 작별 인사와 Close 가 실제로 나가도록 기다리는 최대 시간
+const SHUTDOWN_FLUSH: Duration = Duration::from_millis(700);
 /// 사내 점심 모임 규모를 넘는 접속은 받지 않는다.
 const MAX_PEERS: usize = 32;
 /// 참여자가 접속하는 경로. 다른 프로그램의 WebSocket 과 섞이지 않게 구분만 한다.
@@ -46,6 +52,8 @@ type Tx = mpsc::UnboundedSender<Message>;
 struct Host {
     peers: Arc<Mutex<HashMap<String, Tx>>>,
     stop: watch::Sender<bool>,
+    /// 앱이 꺼질 때 참여자들에게 보낼 텍스트 (프론트가 서버를 켤 때 맡긴다)
+    will: Option<String>,
 }
 
 struct Client {
@@ -58,6 +66,24 @@ struct Client {
 pub struct ShareState {
     host: Mutex<Option<Host>>,
     client: Mutex<Option<Client>>,
+    /// 아직 끝나지 않은 쓰기 태스크 수 — 앱이 꺼질 때 다 보낼 때까지 기다리는 데 쓴다
+    writers: Arc<AtomicUsize>,
+}
+
+/// 쓰기 태스크가 살아 있는 동안 `writers` 를 하나 올려 둔다 (태스크가 끝나면 Drop 에서 내린다).
+struct WriterGuard(Arc<AtomicUsize>);
+
+impl WriterGuard {
+    fn new(n: &Arc<AtomicUsize>) -> Self {
+        n.fetch_add(1, Ordering::SeqCst);
+        WriterGuard(n.clone())
+    }
+}
+
+impl Drop for WriterGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 static PEER_SEQ: AtomicU64 = AtomicU64::new(1);
@@ -185,6 +211,7 @@ pub async fn share_host_start<R: Runtime>(
     state: State<'_, ShareState>,
     port: u16,
     gen: u64,
+    will: Option<String>,
 ) -> Result<HostInfo, String> {
     if port < 1024 {
         return Err("포트는 1024 ~ 65535 사이로 정해 주세요.".into());
@@ -203,6 +230,7 @@ pub async fn share_host_start<R: Runtime>(
     {
         let app = app.clone();
         let peers = peers.clone();
+        let writers = state.writers.clone();
         let mut stop = stop_rx.clone();
         tauri::async_runtime::spawn(async move {
             loop {
@@ -221,6 +249,7 @@ pub async fn share_host_start<R: Runtime>(
                                 stream,
                                 addr,
                                 peers.clone(),
+                                writers.clone(),
                                 stop_rx.clone(),
                             ));
                         }
@@ -235,6 +264,7 @@ pub async fn share_host_start<R: Runtime>(
     *state.host.lock().unwrap() = Some(Host {
         peers,
         stop: stop_tx,
+        will: will.filter(|w| !w.is_empty()),
     });
 
     Ok(HostInfo {
@@ -250,6 +280,7 @@ async fn serve_peer<R: Runtime>(
     stream: TcpStream,
     addr: SocketAddr,
     peers: Arc<Mutex<HashMap<String, Tx>>>,
+    writers: Arc<AtomicUsize>,
     mut stop: watch::Receiver<bool>,
 ) {
     let accepted = tokio::time::timeout(
@@ -280,7 +311,9 @@ async fn serve_peer<R: Runtime>(
     );
 
     // 쓰기 전담 태스크. Close 를 보내면(내보내기·서버 종료) 끝나고, 읽기 루프도 따라 끝난다.
+    let guard = WriterGuard::new(&writers);
     let writer = tauri::async_runtime::spawn(async move {
+        let _guard = guard;
         while let Some(m) = rx.recv().await {
             let closing = matches!(m, Message::Close(_));
             if sink.send(m).await.is_err() || closing {
@@ -338,6 +371,39 @@ fn ip_text(ip: IpAddr) -> String {
 #[tauri::command]
 pub fn share_host_stop(state: State<'_, ShareState>) {
     stop_host(&state);
+}
+
+/// 앱이 꺼질 때 (lib.rs 의 `RunEvent::Exit`). 프론트를 거치지 않고 끝내야 하는 경우라
+/// 호스트면 맡아 둔 유언을 보낸 뒤 `Close(Away)` 로 닫고, 참여 중이면 호스트에 Close 를 보낸다.
+/// 쓰기 태스크가 다 끝나거나 `SHUTDOWN_FLUSH` 가 지날 때까지 기다린다 — 그사이 프로세스가 끝나면
+/// 큐에 남은 메시지가 나가지 못한다. 이미 꺼져 있으면 바로 돌아온다.
+pub fn shutdown(state: &ShareState) {
+    let mut busy = false;
+    let host = state.host.lock().unwrap().take();
+    if let Some(h) = host {
+        busy = true;
+        for tx in h.peers.lock().unwrap().values() {
+            if let Some(w) = &h.will {
+                let _ = tx.send(Message::text(w.clone()));
+            }
+            let _ = tx.send(Message::Close(Some(CloseFrame {
+                code: CloseCode::Away,
+                reason: "host quit".into(),
+            })));
+        }
+        let _ = h.stop.send(true);
+    }
+    if state.client.lock().unwrap().is_some() {
+        busy = true;
+        stop_client(state);
+    }
+    if !busy {
+        return;
+    }
+    let until = Instant::now() + SHUTDOWN_FLUSH;
+    while state.writers.load(Ordering::SeqCst) > 0 && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// 지정한 연결들에 같은 텍스트를 보낸다 (방 상태 방송, 개별 응답).
@@ -471,7 +537,9 @@ pub async fn share_client_connect<R: Runtime>(
     let (stop_tx, mut stop_rx) = watch::channel(false);
     let (done_tx, mut done_rx) = oneshot::channel::<()>();
 
+    let guard = WriterGuard::new(&state.writers);
     let writer = tauri::async_runtime::spawn(async move {
+        let _guard = guard;
         while let Some(m) = rx.recv().await {
             let closing = matches!(m, Message::Close(_));
             if sink.send(m).await.is_err() || closing {
@@ -609,7 +677,7 @@ mod tests {
         let handle = app.handle().clone();
         let port = free_port();
         tauri::async_runtime::block_on(async {
-            let info = share_host_start(handle.clone(), handle.state::<ShareState>(), port, 7)
+            let info = share_host_start(handle.clone(), handle.state::<ShareState>(), port, 7, None)
                 .await
                 .unwrap();
             assert_eq!(info.port, port);
@@ -652,10 +720,10 @@ mod tests {
         let (b, _rb) = app_with_events(EV_HOST);
         let port = free_port();
         tauri::async_runtime::block_on(async {
-            share_host_start(a.handle().clone(), a.state::<ShareState>(), port, 1)
+            share_host_start(a.handle().clone(), a.state::<ShareState>(), port, 1, None)
                 .await
                 .unwrap();
-            let err = share_host_start(b.handle().clone(), b.state::<ShareState>(), port, 1)
+            let err = share_host_start(b.handle().clone(), b.state::<ShareState>(), port, 1, None)
                 .await
                 .err()
                 .unwrap();
@@ -670,7 +738,7 @@ mod tests {
         let (guest, guest_rx) = app_with_events(EV_CLIENT);
         let port = free_port();
         tauri::async_runtime::block_on(async {
-            share_host_start(host.handle().clone(), host.state::<ShareState>(), port, 3)
+            share_host_start(host.handle().clone(), host.state::<ShareState>(), port, 3, None)
                 .await
                 .unwrap();
             share_client_connect(
@@ -720,7 +788,7 @@ mod tests {
         let (host, host_rx) = app_with_events(EV_HOST);
         let port = free_port();
         tauri::async_runtime::block_on(async {
-            share_host_start(host.handle().clone(), host.state::<ShareState>(), port, 5)
+            share_host_start(host.handle().clone(), host.state::<ShareState>(), port, 5, None)
                 .await
                 .unwrap();
             let probe = tauri::async_runtime::spawn(share_probe(
@@ -746,7 +814,7 @@ mod tests {
         let (host, _rx) = app_with_events(EV_HOST);
         let port = free_port();
         tauri::async_runtime::block_on(async {
-            share_host_start(host.handle().clone(), host.state::<ShareState>(), port, 6)
+            share_host_start(host.handle().clone(), host.state::<ShareState>(), port, 6, None)
                 .await
                 .unwrap();
             let reply = share_probe("127.0.0.1".into(), port, "{}".into()).await.unwrap();
@@ -762,6 +830,85 @@ mod tests {
             .err()
             .unwrap();
         assert!(err.contains("호스트가 서버를 켰는지"), "{err}");
+    }
+
+    #[test]
+    fn shutdown_sends_will_then_close() {
+        let (app, rx) = app_with_events(EV_HOST);
+        let handle = app.handle().clone();
+        let port = free_port();
+        tauri::async_runtime::block_on(async {
+            share_host_start(
+                handle.clone(),
+                handle.state::<ShareState>(),
+                port,
+                8,
+                Some("{\"t\":\"bye\"}".into()),
+            )
+            .await
+            .unwrap();
+            let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}{WS_PATH}"))
+                .await
+                .unwrap();
+            next_kind(&rx, "open");
+
+            // 앱이 꺼질 때처럼 프론트를 거치지 않고 끝낸다 — 다 보낼 때까지(길어야 SHUTDOWN_FLUSH) 기다린다.
+            let t0 = Instant::now();
+            shutdown(&handle.state::<ShareState>());
+            assert!(t0.elapsed() < Duration::from_secs(1));
+
+            let first = ws.next().await.unwrap().unwrap();
+            assert_eq!(first.into_text().unwrap().as_str(), "{\"t\":\"bye\"}");
+            match ws.next().await {
+                Some(Ok(Message::Close(Some(f)))) => assert_eq!(f.code, CloseCode::Away),
+                other => panic!("Close(Away) 가 와야 함: {other:?}"),
+            }
+            // 두 번 불러도 괜찮다 (이미 꺼져 있으면 바로 돌아온다).
+            let t1 = Instant::now();
+            shutdown(&handle.state::<ShareState>());
+            assert!(t1.elapsed() < Duration::from_millis(50));
+        });
+    }
+
+    #[test]
+    fn client_sees_will_on_host_shutdown() {
+        let (host, host_rx) = app_with_events(EV_HOST);
+        let (guest, guest_rx) = app_with_events(EV_CLIENT);
+        let port = free_port();
+        tauri::async_runtime::block_on(async {
+            share_host_start(
+                host.handle().clone(),
+                host.state::<ShareState>(),
+                port,
+                4,
+                Some("{\"t\":\"bye\",\"reason\":\"끝\"}".into()),
+            )
+            .await
+            .unwrap();
+            share_client_connect(
+                guest.handle().clone(),
+                guest.state::<ShareState>(),
+                "127.0.0.1".into(),
+                port,
+                12,
+            )
+            .await
+            .unwrap();
+            next_kind(&host_rx, "open");
+
+            shutdown(&host.state::<ShareState>());
+            let m = next_kind(&guest_rx, "msg");
+            assert_eq!(m["data"], "{\"t\":\"bye\",\"reason\":\"끝\"}");
+            assert_eq!(next_kind(&guest_rx, "close")["gen"], 12);
+        });
+    }
+
+    #[test]
+    fn shutdown_without_anything_open_is_instant() {
+        let state = ShareState::default();
+        let t0 = Instant::now();
+        shutdown(&state);
+        assert!(t0.elapsed() < Duration::from_millis(50));
     }
 
     #[test]

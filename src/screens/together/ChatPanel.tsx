@@ -4,11 +4,14 @@
  * 참여자 줄에 마우스를 올리면 '부르기'가 보인다 — 한 번 더 물은 뒤 그 사람 창을 맨 앞으로 띄운다.
  * 오른쪽 위의 '조용히'를 켜면 새 채팅이 와도 작업표시줄에서 깜박이지 않는다 (방 머리는 최소 창 폭에
  * 맞춰 꽉 차 있어서 이 열의 머리에 둔다).
+ * 남의 말풍선에 마우스를 올리면 리액션 고르기 줄이 뜨고, 단 리액션은 말풍선 아래 칩으로 모두에게 보인다
+ * (reactions.tsx). 점심 방·도란식사 방이 같이 쓴다.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { hhmm } from '../../lib/util';
-import { type ChatMsg, LIMITS, type RoomState, shortName } from '../../share/protocol';
+import { candLabel } from '../../share/doran';
+import { type ChatMsg, LIMITS, type ReactKey, type RoomState, shortName } from '../../share/protocol';
 import { useSettings } from '../../store/settingsStore';
 import { useShare } from '../../store/shareStore';
 import { toast } from '../../store/uiStore';
@@ -24,6 +27,7 @@ import {
   INPUT_BORDER,
   memberOf,
 } from './parts';
+import { ReactBar, ReactChips } from './reactions';
 
 const TYPING_SEND_MS = 2000;
 
@@ -92,7 +96,11 @@ export default function ChatPanel({
   const typing = room.members.filter((m) => m.typing && m.id !== me && m.online);
   // 확인하는 사이에 나가면 확인창도 닫는다.
   const callTarget = callFor ? ppl.find((m) => m.id === callFor && m.id !== me) : undefined;
-  const rname = (id: string) => room.restaurants.find((r) => r.id === id)?.name ?? '';
+  // 점심은 식당, 도란식사는 선택지(보는 중)·식당(정보 보는 중)
+  const rname = (id: string) => candLabel(room, id) || (room.restaurants.find((r) => r.id === id)?.name ?? '');
+  const reactTo = (msgId: string) => (key: ReactKey) => act({ type: 'react', msgId, key });
+  const lastMsg = room.chat[room.chat.length - 1];
+  const lastReact = lastMsg?.kind === 'chat' ? JSON.stringify(lastMsg.react ?? {}) : '';
 
   useLayoutEffect(() => {
     const el = listRef.current;
@@ -101,6 +109,13 @@ export default function ChatPanel({
       el.scrollTop = el.scrollHeight;
     });
   }, [room.chat.length, typing.length]);
+
+  // 맨 아래 말풍선에 리액션이 붙어 키가 커지면 — 맨 아래를 보고 있었을 때만 따라 내려간다.
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el || !lastReact) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 90) el.scrollTop = el.scrollHeight;
+  }, [lastReact]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -313,37 +328,44 @@ export default function ChatPanel({
             return (
               <div
                 key={m.id}
+                className="tg-msg"
                 style={{
+                  position: 'relative',
                   marginTop: gap,
                   animation: 'lp-in .3s ease-out both',
                   display: 'flex',
-                  justifyContent: 'flex-end',
-                  gap: 5,
+                  flexDirection: 'column',
+                  alignItems: 'flex-end',
                 }}
               >
-                {time}
-                <span
-                  style={{
-                    fontSize: 13,
-                    lineHeight: 1.45,
-                    background: AC,
-                    color: 'white',
-                    padding: '7px 11px',
-                    borderRadius: '12px 4px 12px 12px',
-                    maxWidth: '80%',
-                    minWidth: 0,
-                    overflowWrap: 'anywhere',
-                    userSelect: 'text',
-                  }}
-                >
-                  {m.text}
-                </span>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 5, width: '100%' }}>
+                  {time}
+                  <span
+                    style={{
+                      fontSize: 13,
+                      lineHeight: 1.45,
+                      background: AC,
+                      color: 'white',
+                      padding: '7px 11px',
+                      borderRadius: '12px 4px 12px 12px',
+                      maxWidth: '80%',
+                      minWidth: 0,
+                      overflowWrap: 'anywhere',
+                      userSelect: 'text',
+                    }}
+                  >
+                    {m.text}
+                  </span>
+                </div>
+                <ReactChips m={m} room={room} me={me} mine onPick={reactTo(m.id)} />
               </div>
             );
           return (
             <div
               key={m.id}
+              className="tg-msg"
               style={{
+                position: 'relative',
                 marginTop: gap,
                 animation: 'lp-in .3s ease-out both',
                 display: 'flex',
@@ -384,7 +406,9 @@ export default function ChatPanel({
                   </span>
                   {time}
                 </div>
+                <ReactChips m={m} room={room} me={me} mine={false} onPick={reactTo(m.id)} />
               </div>
+              <ReactBar m={m} me={me} below={i === 0} onPick={reactTo(m.id)} />
             </div>
           );
         })}

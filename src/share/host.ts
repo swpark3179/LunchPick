@@ -5,11 +5,15 @@
  * Action 이 모두 `act()` 를 지나가고, 바뀐 상태는 곧바로 호스트 화면에, 잠시 모아서
  * 참여자들에게 방송된다. 무작위 뽑기는 연출 시간표(anim.ts)가 끝나면 확정하고,
  * 사다리·하트 걸기는 누구든 출발·마감·결과 적용을 누를 때 진행한다.
+ *
+ * 방 종류가 둘이다 — 점심(lunch)은 호스트의 식당 목록(useData)으로 고르고, 도란식사(doran)는 방 안에서 입력한
+ * 식당으로 선택지를 만들어 고른다 (doranHost.ts). 공용 단계(사다리·하트 걸기·확정 풀기·예약·채팅)는 함께 쓰고,
+ * 후보 이름·존재 여부는 candLabel · candExists 로 묻는다.
  */
 import { ERR_NO_CREDS, fabrixChat, type ChatTurn } from '../lib/ipc';
 import { mergeRestaurants, sanitizeRestaurants } from '../lib/shareFormat';
 import type { Restaurant } from '../lib/types';
-import { fmtPhone, pick, shuffle, uid } from '../lib/util';
+import { fmtPhone, shuffle, uid } from '../lib/util';
 import { useData } from '../store/dataStore';
 import { speedMul, useSettings } from '../store/settingsStore';
 import {
@@ -22,14 +26,9 @@ import {
   tagsOfConcepts,
   turnPrompt,
 } from './ai';
-import {
-  DELTA_HOLD_MS,
-  LADDER_REVEAL_MS,
-  LADDER_STAGGER_MS,
-  ROLL_FIRST_HOPS,
-  ROLL_NEXT_HOPS,
-  rollTimeline,
-} from './anim';
+import { DELTA_HOLD_MS, LADDER_REVEAL_MS, LADDER_STAGGER_MS, rollSteps, rollTimeline } from './anim';
+import { candExists, candLabel, unitOf } from './doran';
+import { doranHandlers } from './doranHost';
 import { genLadder, ladderWinners } from './ladder';
 import { cleanItems, itemsText } from './order';
 import { betSum, cleanBet, summaryText, topTie, totals, zeroIds } from './pref';
@@ -41,12 +40,16 @@ import {
   type EditableRest,
   type FocusMap,
   type H2C,
+  HOST_QUIT_REASON,
   LIMITS,
   type LadderRun,
   type Member,
   type PrefRun,
   PROTOCOL,
+  REACTION_KEYS,
+  type ReactKey,
   type Removed,
+  type RoomKind,
   type RoomState,
   type SyncRun,
   cleanName,
@@ -91,6 +94,8 @@ export type HostCallbacks = {
 };
 
 export type HostRoom = {
+  /** 앱이 갑자기 꺼질 때 Rust 가 참여자들에게 대신 보내는 작별 인사 (transport.start 에 맡긴다) */
+  will: string;
   getState: () => RoomState;
   getFocus: () => FocusMap;
   act: (memberId: string, a: Action) => void;
@@ -110,16 +115,54 @@ const errText = (e: unknown) =>
 
 const FIELD_NAMES = { phone: '전화번호', menus: '메뉴', memo: '메모' } as const;
 
-export function createHostRoom(cb: HostCallbacks): HostRoom {
+/** 점심 방에서만 받는 요청 — 호스트의 식당 목록·먹은 기록을 쓰거나 식당 id 를 가정한다 */
+const LUNCH_ONLY = new Set<Action['type']>([
+  'dislike',
+  'ai',
+  'aiReset',
+  'aiRemove',
+  'final',
+  'pickMenu',
+  'editRest',
+  'removeRest',
+  'syncStart',
+  'syncAnswer',
+]);
+/** 도란식사 방에서만 받는 요청 */
+const DORAN_ONLY = new Set<Action['type']>([
+  'dRestSave',
+  'dRestLoad',
+  'dRestRemove',
+  'choiceAdd',
+  'choiceEdit',
+  'choiceRemove',
+  'choiceFinal',
+  'budget',
+]);
+
+/** 리액션 하나를 넣거나 뺀다 — 아무도 없는 리액션은 키째 지운다 */
+function toggleReact(cur: Partial<Record<ReactKey, string[]>> | undefined, key: ReactKey, by: string) {
+  const out = { ...(cur ?? {}) };
+  const list = out[key] ?? [];
+  const next = list.includes(by) ? list.filter((x) => x !== by) : [...list, by];
+  if (next.length) out[key] = next;
+  else delete out[key];
+  return Object.keys(out).length ? out : undefined;
+}
+
+export function createHostRoom(cb: HostCallbacks, kind: RoomKind = 'lunch'): HostRoom {
   const settings = useSettings.getState();
   const hostId = settings.shareId || uid();
   const hostName = cleanName(settings.name) || '호스트';
   const now = Date.now();
-  const restaurants = useData.getState().restaurants;
+  const doran = kind === 'doran';
+  // 도란식사는 방 안에서 식당을 올린다 — 호스트의 점심 식당 목록과는 따로다.
+  const restaurants = doran ? [] : useData.getState().restaurants;
 
   let state: RoomState = {
     v: PROTOCOL,
     rev: 1,
+    kind,
     hostId,
     aiReady: aiReadyNow(),
     members: [
@@ -152,9 +195,21 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     reservation: null,
     reserving: null,
     edited: {},
-    chat: [{ id: uid(), at: now, kind: 'sys', text: `방이 열렸어요 · 식당 ${restaurants.length}곳 기준` }],
+    chat: [
+      {
+        id: uid(),
+        at: now,
+        kind: 'sys',
+        text: doran
+          ? '도란식사 방이 열렸어요 · 식당을 올리고 선택지를 만들어 보세요'
+          : `방이 열렸어요 · 식당 ${restaurants.length}곳 기준`,
+      },
+    ],
     sync: null,
     removed: [],
+    choices: [],
+    choiceSeq: 0,
+    budget: null,
   };
   let focus: FocusMap = {};
 
@@ -244,6 +299,10 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
   const nm = (id: string) => shortName(member(id)?.name ?? '누군가');
   const restOf = (id: string) => state.restaurants.find((r) => r.id === id);
   const rname = (id: string) => restOf(id)?.name ?? '';
+  /** 후보 이름 — 점심은 식당, 도란식사는 선택지 ('A안 진주집') */
+  const lbl = (id: string, s: RoomState = state) => candLabel(s, id);
+  /** 후보를 세는 말 ('곳' / '개') */
+  const unit = unitOf(state);
   const rolling = () => !!state.roll && !state.roll.done;
 
   const patchMember = (s: RoomState, id: string, p: Partial<Member>): RoomState => ({
@@ -261,8 +320,9 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
 
   // ------------------------------------------------------------ 식당 데이터 · 설정 구독
 
+  // 점심 방의 식당 목록은 호스트 목록 그대로다 — 도란식사 방은 따라가지 않는다.
   const unsubData = useData.subscribe((d, prev) => {
-    if (d.restaurants === prev.restaurants) return;
+    if (doran || d.restaurants === prev.restaurants) return;
     const ids = new Set(d.restaurants.map((r) => r.id));
     const keep = <T>(o: Record<string, T>) =>
       Object.fromEntries(Object.entries(o).filter(([k]) => ids.has(k)));
@@ -387,19 +447,10 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     const picks = shuffle(pool)
       .slice(0, n)
       .map((r) => r.id);
-    const ids = pool.map((r) => r.id);
-    const seq = picks.map((p, k) => {
-      const hops = k === 0 ? ROLL_FIRST_HOPS : ROLL_NEXT_HOPS;
-      const steps: string[] = [];
-      for (let j = 0; j < hops; j++) {
-        let id = pick(ids);
-        // 같은 카드에 연달아 머무르지 않게 옆으로 비킨다.
-        if (id === steps[steps.length - 1] && ids.length > 1) id = ids[(ids.indexOf(id) + 1) % ids.length];
-        steps.push(id);
-      }
-      steps.push(p);
-      return steps;
-    });
+    const seq = rollSteps(
+      pool.map((r) => r.id),
+      picks,
+    );
     const roll = {
       id: uid(),
       by,
@@ -436,15 +487,16 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     Object.entries(state.cands)
       .sort((a, b) => a[1].at - b[1].at)
       .map(([id]) => id)
-      .filter((id) => restOf(id));
+      .filter((id) => candExists(state, id));
 
   const openLadder = (by: string, keepRaw: number) => {
     if (blocked(by)) return;
     if (state.ladder) return;
     const cands = candOrder();
     const n = cands.length;
-    if (n < 2) return reject(by, '후보가 2곳 이상이어야 사다리를 탈 수 있어요.');
-    if (n > LIMITS.ladderMax) return reject(by, `사다리는 후보 ${LIMITS.ladderMax}곳 이하에서 탈 수 있어요.`);
+    if (n < 2) return reject(by, `후보가 2${unit} 이상이어야 사다리를 탈 수 있어요.`);
+    if (n > LIMITS.ladderMax)
+      return reject(by, `사다리는 후보 ${LIMITS.ladderMax}${unit} 이하에서 탈 수 있어요.`);
     const keep = Math.max(1, Math.min(Math.floor(keepRaw) || 1, n - 1));
     const { rungs, slots } = genLadder(n, keep);
     const run: LadderRun = {
@@ -459,7 +511,7 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
       speed: speedMul(useSettings.getState().animSpeed),
     };
     update((s) =>
-      withSys({ ...s, ladder: run }, `${nm(by)}님이 사다리를 꺼냈어요 · ${n}곳 중 ${keep}곳`, by),
+      withSys({ ...s, ladder: run }, `${nm(by)}님이 사다리를 꺼냈어요 · ${n}${unit} 중 ${keep}${unit}`, by),
     );
   };
 
@@ -506,7 +558,7 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
       winners.forEach((id, k) => {
         cands[id] = s.cands[id] ?? { by, at: Date.now() + k };
       });
-      const names = winners.map((id) => s.restaurants.find((r) => r.id === id)?.name).join(', ');
+      const names = winners.map((id) => lbl(id, s)).join(', ');
       return withSys({ ...s, cands, ladder: null }, `사다리 결과 · ${names} 남았어요`, by);
     });
   };
@@ -530,9 +582,9 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     } else {
       if (P) return;
       cands = candOrder();
-      if (cands.length < 2) return reject(by, '후보가 2곳 이상이어야 하트를 걸 수 있어요.');
+      if (cands.length < 2) return reject(by, `후보가 2${unit} 이상이어야 하트를 걸 수 있어요.`);
       if (cands.length > LIMITS.prefMax)
-        return reject(by, `하트 걸기는 후보 ${LIMITS.prefMax}곳 이하에서 할 수 있어요.`);
+        return reject(by, `하트 걸기는 후보 ${LIMITS.prefMax}${unit} 이하에서 할 수 있어요.`);
     }
     const run: PrefRun = {
       id: uid(),
@@ -548,8 +600,8 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
       withSys(
         { ...s, pref: run, prefTally: null },
         retie
-          ? `${nm(by)}님이 공동 1위끼리 한 번 더 걸어요 · ${cands.map(rname).join(', ')}`
-          : `${nm(by)}님이 하트 걸기를 열었어요 · 후보 ${cands.length}곳에 하트 ${run.hearts}개씩`,
+          ? `${nm(by)}님이 공동 1위끼리 한 번 더 걸어요 · ${cands.map((id) => lbl(id)).join(', ')}`
+          : `${nm(by)}님이 하트 걸기를 열었어요 · 후보 ${cands.length}${unit}에 하트 ${run.hearts}개씩`,
         by,
       ),
     );
@@ -583,7 +635,7 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     update((s) =>
       withSys(
         { ...s, pref: { ...P, closed: { by, at: Date.now() } }, prefTally: tally },
-        `${nm(by)}님이 하트 걸기를 마감했어요 · ${summaryText(P, rname)}`,
+        `${nm(by)}님이 하트 걸기를 마감했어요 · ${summaryText(P, (id) => lbl(id))}`,
         by,
       ),
     );
@@ -613,7 +665,7 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
       zero.forEach((c) => delete cands[c]);
       return withSys(
         { ...s, cands, pref: null },
-        `${nm(by)}님이 하트를 못 받은 ${zero.length}곳을 후보에서 내렸어요 · ${zero.map(rname).join(', ')}`,
+        `${nm(by)}님이 하트를 못 받은 ${zero.length}${unit}을 후보에서 내렸어요 · ${zero.map((id) => lbl(id)).join(', ')}`,
         by,
       );
     });
@@ -964,6 +1016,8 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     if (!items.length && !note) return reject(by, '예약한 메뉴나 특이사항을 적어 주세요.');
     const prev = state.reservation;
     const what = itemsText(items) || '메뉴 미정';
+    // 도란식사는 선택지 이름으로 알린다 ('A안 진주집').
+    const where = doran && state.final?.choiceId ? lbl(state.final.choiceId) : r.name;
     update((s) =>
       withSys(
         {
@@ -980,8 +1034,8 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
           reserving: null,
         },
         prev
-          ? `${nm(by)}님이 ‘${r.name}’ 예약 내용을 고쳤어요 · ${what}`
-          : `${nm(by)}님이 ‘${r.name}’ 예약을 마쳤어요 · ${what}`,
+          ? `${nm(by)}님이 ‘${where}’ 예약 내용을 고쳤어요 · ${what}`
+          : `${nm(by)}님이 ‘${where}’ 예약을 마쳤어요 · ${what}`,
         by,
       ),
     );
@@ -1180,10 +1234,44 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
     update((s) => withSys(s, `${nm(by)}님이 ${nm(to)}님을 불렀어요`, by));
   };
 
+  // ------------------------------------------------------------ 도란식사
+
+  const dh = doranHandlers({
+    get: () => state,
+    update,
+    withSys,
+    reject,
+    nm,
+    blocked,
+    rolling,
+    later,
+    speed: () => speedMul(useSettings.getState().animSpeed),
+    dropFocus: (ids) => {
+      for (const [m, f] of Object.entries(focus)) if (ids.includes(f)) setFocus(m, null);
+    },
+  });
+
+  // ------------------------------------------------------------ 리액션
+
+  const react = (by: string, msgId: string, key: ReactKey) => {
+    if (!REACTION_KEYS.includes(key)) return;
+    const m = state.chat.find((x) => x.id === msgId);
+    // 남의 채팅에만 단다 (안내 줄·내 채팅에는 달지 않는다).
+    if (!m || m.kind !== 'chat' || m.from === by) return;
+    update((s) => ({
+      ...s,
+      chat: s.chat.map((x) =>
+        x.id === msgId && x.kind === 'chat' ? { ...x, react: toggleReact(x.react, key, by) } : x,
+      ),
+    }));
+  };
+
   // ------------------------------------------------------------ Action
 
   const act = (by: string, a: Action) => {
     if (disposed || !a || typeof a !== 'object' || !member(by)) return;
+    if (doran ? LUNCH_ONLY.has(a.type) : DORAN_ONLY.has(a.type))
+      return reject(by, doran ? '도란식사 방에서는 할 수 없는 일이에요.' : '점심 방에서는 할 수 없는 일이에요.');
     switch (a.type) {
       case 'chat': {
         const text = String(a.text ?? '')
@@ -1210,17 +1298,19 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
       }
       case 'focus': {
         const id = a.restId === null ? null : String(a.restId);
-        setFocus(by, id && restOf(id) ? id : null);
+        setFocus(by, id && (restOf(id) || candExists(state, id)) ? id : null);
         return;
       }
       case 'dislike':
         toggleDislike(by, String(a.restId));
         return;
       case 'cand':
-        toggleCand(by, String(a.restId));
+        if (doran) dh.toggleLive(by, String(a.restId));
+        else toggleCand(by, String(a.restId));
         return;
       case 'roll':
-        startRoll(by, Number(a.count));
+        if (doran) dh.startRoll(by, Number(a.count));
+        else startRoll(by, Number(a.count));
         return;
       case 'ai':
         queueAi(by, a.prompt, a.ref);
@@ -1302,6 +1392,33 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
       }
       case 'call':
         callMember(by, String(a.to));
+        return;
+      case 'react':
+        react(by, String(a.msgId), a.key);
+        return;
+      case 'dRestSave':
+        dh.saveRest(by, a.rest);
+        return;
+      case 'dRestLoad':
+        dh.loadRests(by, a.restaurants);
+        return;
+      case 'dRestRemove':
+        dh.removeRest(by, String(a.restId));
+        return;
+      case 'choiceAdd':
+        dh.addChoice(by, String(a.restId), a.items, a.label, a.note);
+        return;
+      case 'choiceEdit':
+        dh.editChoice(by, String(a.id), a.items, a.label, a.note);
+        return;
+      case 'choiceRemove':
+        dh.removeChoice(by, String(a.id));
+        return;
+      case 'choiceFinal':
+        dh.finalChoice(by, String(a.id));
+        return;
+      case 'budget':
+        dh.setBudget(by, a.amount);
         return;
     }
   };
@@ -1430,6 +1547,7 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
         v: PROTOCOL,
         host: member(hostId)?.name ?? '',
         online: state.members.filter((x) => x.online).length,
+        kind,
       });
     else if (m.t === 'hello') hello(c, m);
     else if (m.t === 'act' && c.memberId) act(c.memberId, m.a);
@@ -1443,7 +1561,10 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
   const kick = (memberId: string) => {
     if (memberId === hostId) return;
     const peers = [...conns.values()].filter((c) => c.memberId === memberId).map((c) => c.peer);
-    send(peers, { t: 'bye', reason: '호스트가 같이 고르기에서 내보냈어요.' });
+    send(peers, {
+      t: 'bye',
+      reason: doran ? '호스트가 도란식사 방에서 내보냈어요.' : '호스트가 같이 고르기에서 내보냈어요.',
+    });
     const name = nm(memberId);
     for (const p of peers) {
       const c = conns.get(p);
@@ -1498,5 +1619,13 @@ export function createHostRoom(cb: HostCallbacks): HostRoom {
 
   cb.onState(state);
 
-  return { getState: () => state, getFocus: () => focus, act, handle, kick, dispose };
+  return {
+    will: JSON.stringify({ t: 'bye', reason: HOST_QUIT_REASON } satisfies H2C),
+    getState: () => state,
+    getFocus: () => focus,
+    act,
+    handle,
+    kick,
+    dispose,
+  };
 }

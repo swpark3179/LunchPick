@@ -4,9 +4,11 @@
  */
 import { useEffect, useState } from 'react';
 
+import Seg from '../../components/Seg';
 import Toggle from '../../components/Toggle';
 import { copyText } from '../../lib/ipc';
-import type { ShareMode } from '../../lib/types';
+import type { HostKind, ShareMode } from '../../lib/types';
+import { kindName } from '../../share/doran';
 import { cleanName, hashHue, LIMITS, shortName } from '../../share/protocol';
 import { type HostInfo, localInfo } from '../../share/transport';
 import { useSettings } from '../../store/settingsStore';
@@ -67,6 +69,10 @@ export default function ShareCard() {
   const me = { name: name || '나', hue: hashHue(name || '나') };
   const online = sh.room?.members.filter((m) => m.online) ?? [];
   const n = sh.room?.restaurants.length ?? 0;
+  /** 열려 있는 방(없으면 열 방)의 종류 */
+  const kind: HostKind = sh.room?.kind ?? (host ? s.hostKind : 'lunch');
+  const doran = kind === 'doran';
+  const start = () => void sh.startHost(s.hostKind);
 
   useEffect(() => {
     localInfo(parsePort(s.port) ?? 8787)
@@ -98,7 +104,7 @@ export default function ShareCard() {
   const pill = host
     ? sh.status === 'hosting'
       ? {
-          text: `운영 중 · ${online.length}명`,
+          text: `${doran ? '도란식사 ' : ''}운영 중 · ${online.length}명`,
           bg: 'oklch(0.95 0.04 150)',
           fg: 'oklch(0.4 0.1 150)',
           dot: OK,
@@ -109,7 +115,7 @@ export default function ShareCard() {
         : { text: '꺼짐', bg: 'oklch(0.95 0.004 75)', fg: 'oklch(0.45 0.012 60)', dot: GRAY_DOT, live: false }
     : sh.status === 'connected'
       ? {
-          text: `접속됨 · ${online.length}명`,
+          text: `${doran ? '도란식사 ' : ''}접속됨 · ${online.length}명`,
           bg: 'oklch(0.95 0.04 150)',
           fg: 'oklch(0.4 0.1 150)',
           dot: OK,
@@ -136,9 +142,14 @@ export default function ShareCard() {
   // ------------------------------------------------ 단계
   const steps: string[] =
     host && sh.status === 'starting'
-      ? [`포트 ${s.port} 확인`, '로컬 서버 시작', `식당 ${n}곳 공유 준비`]
+      ? [`포트 ${s.port} 확인`, '로컬 서버 시작', doran ? '도란식사 방 준비' : `식당 ${n}곳 공유 준비`]
       : !host && sh.status === 'connecting'
-        ? ['호스트 찾는 중', '연결 확인', `식당 정보 받는 중${n ? ` ${sh.sync}/${n}` : ''}`, '입장 준비']
+        ? [
+            '호스트 찾는 중',
+            '연결 확인',
+            `${doran ? '도란식사 ' : ''}식당 정보 받는 중${n ? ` ${sh.sync}/${n}` : ''}`,
+            '입장 준비',
+          ]
         : [];
   const stepTarget = host ? myAddr : sh.target ? `${sh.target.host}:${sh.target.port}` : s.joinAddr;
 
@@ -248,7 +259,7 @@ export default function ShareCard() {
           on={host}
           dim={busy && !host}
           title="호스트로 열기"
-          desc="내 PC에서 서버를 켜요. 내 식당 목록과 AI로 방을 엽니다."
+          desc="내 PC에서 서버를 켜요. 점심 같이 고르기나 도란식사 정하기 방을 엽니다."
           onClick={() => pickRole('host')}
         />
         <RoleTile
@@ -268,6 +279,23 @@ export default function ShareCard() {
       {/* ------------------------------------------------ 호스트: 꺼짐 */}
       {host && sh.role === 'none' ? (
         <div style={GRID}>
+          <span style={{ ...LABEL, alignSelf: 'start', paddingTop: 6 }}>열 방</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <Seg<HostKind>
+              size="md"
+              options={[
+                { value: 'lunch', label: '점심 같이 고르기' },
+                { value: 'doran', label: '도란식사 정하기' },
+              ]}
+              value={s.hostKind}
+              onChange={(v) => s.patch({ hostKind: v })}
+            />
+            <span style={{ fontSize: 12, color: 'oklch(0.55 0.012 60)', lineHeight: 1.5, textWrap: 'pretty' }}>
+              {s.hostKind === 'doran'
+                ? '방 안에서 식당·메뉴를 같이 입력하고, 식당 + 메뉴 구성으로 선택지를 만들어 정해요. 총사용금액에 맞는지도 보여요.'
+                : '내 식당 목록으로 오늘 점심을 같이 고르고 예약까지 해요. AI 정렬은 내 PC의 키로 해요.'}
+            </span>
+          </div>
           <span style={LABEL}>포트</span>
           <div
             style={{
@@ -287,7 +315,7 @@ export default function ShareCard() {
                 s.patch({ port: e.target.value.replace(/[^\d]/g, '').slice(0, 5) });
               }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') void sh.startHost();
+                if (e.key === 'Enter') start();
               }}
               style={{ ...input(!!portErr), width: 110 }}
             />
@@ -306,18 +334,18 @@ export default function ShareCard() {
             style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}
           >
             <Toggle on={s.autoStart} />
-            앱을 켜면 공유 서버도 함께 시작
+            앱을 켜면 공유 서버도 함께 시작 (점심 같이 고르기)
           </div>
           <span />
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <button
               type="button"
               className="tg-accent"
-              onClick={() => void sh.startHost()}
+              onClick={start}
               style={btnAccent()}
             >
               <IconPlay />
-              서버 켜기
+              {s.hostKind === 'doran' ? '도란식사 방 열기' : '서버 켜기'}
             </button>
             <span style={{ fontSize: 12, color: 'oklch(0.55 0.012 60)' }}>
               Windows 방화벽 창이 뜨면 ‘허용’을 눌러 주세요
@@ -484,7 +512,7 @@ export default function ShareCard() {
                 onClick={sh.enterRoom}
                 style={{ ...btnAccent(), animation: online.length > 1 ? 'lp-glow 1.8s infinite' : 'none' }}
               >
-                같이 고르기 열기 →
+                {kindName(kind)} 열기 →
               </button>
               <button
                 type="button"
@@ -553,6 +581,7 @@ export default function ShareCard() {
       {/* ------------------------------------------------ 참여: 접속됨 */}
       {!host && live ? (
         <ClientOn
+          doran={doran}
           reconnecting={sh.status === 'reconnecting'}
           hostName={shortName(sh.room?.members.find((m) => m.host)?.name ?? '호스트')}
           n={n}
@@ -800,6 +829,7 @@ function OtherAddrs({ info, onCopy }: { info: HostInfo | null; onCopy: (t: strin
 }
 
 function ClientOn({
+  doran,
   reconnecting,
   hostName,
   n,
@@ -807,6 +837,7 @@ function ClientOn({
   onOpen,
   onLeave,
 }: {
+  doran: boolean;
   reconnecting: boolean;
   hostName: string;
   n: number;
@@ -849,7 +880,7 @@ function ClientOn({
             color: reconnecting ? 'oklch(0.42 0.1 70)' : 'oklch(0.32 0.08 150)',
           }}
         >
-          {reconnecting ? '연결이 잠깐 끊겼어요' : `${hostName}님의 방에 연결됐어요`}
+          {reconnecting ? '연결이 잠깐 끊겼어요' : `${hostName}님의 ${doran ? '도란식사 ' : ''}방에 연결됐어요`}
         </div>
         <div
           style={{
@@ -860,11 +891,11 @@ function ClientOn({
         >
           {reconnecting
             ? '같은 사람으로 다시 붙는 중이에요…'
-            : `식당 ${n}곳을 받아왔어요 · 곧 같이 고르기 화면으로 이동해요`}
+            : `식당 ${n}곳을 받아왔어요 · 곧 ${doran ? '도란식사 방' : '같이 고르기 화면'}으로 이동해요`}
         </div>
       </div>
       <button type="button" className="tg-accent" onClick={onOpen} style={btnAccent(36, 16)}>
-        같이 고르기 들어가기 →
+        {doran ? '도란식사' : '같이 고르기'} 들어가기 →
       </button>
       <button
         type="button"

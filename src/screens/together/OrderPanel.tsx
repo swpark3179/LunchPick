@@ -555,7 +555,8 @@ export default function OrderPanel({
 
 // ---------------------------------------------------------------- 예약 완료 카드
 
-function ReservationCard({
+/** 예약 카드 — 메뉴 × 수량 · 특이사항 · (예약 뒤 바뀐 메뉴) · 예약 수정/취소. 도란식사 확정 화면도 쓴다(all = []). */
+export function ReservationCard({
   room,
   me,
   v,

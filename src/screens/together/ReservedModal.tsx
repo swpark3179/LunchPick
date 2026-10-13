@@ -5,6 +5,7 @@
  */
 import { copyText } from '../../lib/ipc';
 import { hhmm } from '../../lib/util';
+import { choiceName, choiceOf } from '../../share/doran';
 import { itemsText, reservationText } from '../../share/order';
 import { type RoomState, reservationAuthor } from '../../share/protocol';
 import { toast } from '../../store/uiStore';
@@ -26,6 +27,9 @@ export default function ReservedModal({
   if (!v || !r) return null;
   const author = reservationAuthor(v);
   const mine = room.picks[me]?.items ?? [];
+  // 도란식사는 각자 고른 메뉴가 없고, 어느 선택지로 예약했는지 보여 준다.
+  const doran = room.kind === 'doran';
+  const choice = doran && room.final?.choiceId ? choiceOf(room, room.final.choiceId) : undefined;
   const who = (id: string) => (id === me ? '내가' : `${whoShort(room, me, id)}님이`);
 
   return (
@@ -95,6 +99,12 @@ export default function ReservedModal({
           <span style={{ fontSize: 28, fontWeight: 820, letterSpacing: '-0.03em', lineHeight: 1.15 }}>
             {r.name}
           </span>
+          {choice ? (
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: OK_FG }}>
+              {choiceName(choice)}
+              {choice.label ? ` · ${choice.label}` : ''}
+            </span>
+          ) : null}
           <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: OK_FG }}>
             <Avatar m={memberOf(room, author)} size={20} />
             {v.editedBy
@@ -115,9 +125,11 @@ export default function ReservedModal({
         >
           <ItemTable items={v.items} />
           {v.note ? <NoteBox note={v.note} /> : null}
-          <div style={{ fontSize: 12.5, color: MUTED, lineHeight: 1.5 }}>
-            내가 고른 메뉴 · {mine.length ? itemsText(mine) : '없음'}
-          </div>
+          {doran ? null : (
+            <div style={{ fontSize: 12.5, color: MUTED, lineHeight: 1.5 }}>
+              내가 고른 메뉴 · {mine.length ? itemsText(mine) : '없음'}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
             <button
               type="button"

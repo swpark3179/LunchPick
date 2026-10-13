@@ -4,13 +4,19 @@
  * 접속하면 인사(hello)를 보내고 호스트의 welcome 을 기다린다. 그 뒤로는 호스트가 보내는
  * 방 상태를 그대로 화면에 반영할 뿐이다. 연결이 끊기면 같은 id 로 몇 번 다시 붙어 본다.
  */
-import { type Action, type C2H, type FocusMap, type H2C, PROTOCOL, type RoomState } from './protocol';
-import { clientTransport, probeHost } from './transport';
+import { type Action, type C2H, type FocusMap, type H2C, PROTOCOL, type RoomKind, type RoomState } from './protocol';
+import { clientTransport, isRefused, probeHost } from './transport';
 
 const WELCOME_TIMEOUT_MS = 5000;
 const PING_MS = 8000;
 const SILENT_MS = 25000;
 const RETRY_MS = [1000, 2000, 4000, 6000, 8000, 8000];
+/** 다시 붙는 중 '서버가 없음'이 이만큼 이어지면 호스트가 앱을 껐다고 보고 끝낸다 (강제 종료처럼 작별 인사가 없을 때) */
+const REFUSED_END = 2;
+const GONE_REASON = '호스트 PC에서 방이 닫혔어요. 호스트가 점심픽을 껐거나 서버를 끈 것 같아요.';
+
+/** 호스트가 작별 인사(bye)를 보내고 닫았다 — 다시 붙어도 소용없다 */
+class ByeError extends Error {}
 
 export type ClientStatus = 'connecting' | 'connected' | 'reconnecting';
 
@@ -108,7 +114,7 @@ export function joinRoom(
           // 연결이 닫혔다
           if (!welcomed) {
             clearTimeout(welcomeTimer);
-            reject(new Error(byeReason || e.reason || '호스트가 연결을 끊었어요.'));
+            reject(byeReason ? new ByeError(byeReason) : new Error(e.reason || '호스트가 연결을 끊었어요.'));
             return;
           }
           if (closed) return;
@@ -155,10 +161,14 @@ export function joinRoom(
     }, PING_MS);
   };
 
-  const reconnect = (tryNo = 0) => {
+  const reconnect = (tryNo = 0, refused = 0) => {
     if (closed) return;
     stopTimers();
     cb.onStatus('reconnecting');
+    if (refused >= REFUSED_END) {
+      end(GONE_REASON);
+      return;
+    }
     if (tryNo >= RETRY_MS.length) {
       end('호스트와 연결이 끊겼어요. 호스트 PC가 켜져 있는지 확인하고 다시 접속해 주세요.');
       return;
@@ -173,9 +183,9 @@ export function joinRoom(
         .catch((e) => {
           if (closed) return;
           const msg = errText(e);
-          // 호스트가 일부러 거절한 경우(버전 불일치 등)에는 더 시도하지 않는다.
-          if (/버전|내보냈|다른 곳에서/.test(msg)) end(msg);
-          else reconnect(tryNo + 1);
+          // 호스트가 작별 인사를 보냈거나 일부러 거절한 경우(버전 불일치 등)에는 더 시도하지 않는다.
+          if (e instanceof ByeError || /버전|내보냈|다른 곳에서/.test(msg)) end(msg);
+          else reconnect(tryNo + 1, isRefused(msg) ? refused + 1 : 0);
         });
     }, RETRY_MS[tryNo]);
   };
@@ -212,7 +222,9 @@ export function joinRoom(
 // ---------------------------------------------------------------- 방 찾기
 
 /** 방이 열려 있는지. 열렸으면 호스트가 알려 준 이름·접속 인원·프로토콜 버전 (옛 버전 호스트는 답이 없다) */
-export type RoomProbe = { open: true; host?: string; online?: number; v?: number } | { open: false };
+export type RoomProbe =
+  | { open: true; host?: string; online?: number; v?: number; kind?: RoomKind }
+  | { open: false };
 
 /** 들어가지 않고 그 주소에 같이 고르기 방이 열려 있는지만 확인한다. */
 export async function probeRoom(host: string, port: number): Promise<RoomProbe> {
@@ -230,6 +242,7 @@ export async function probeRoom(host: string, port: number): Promise<RoomProbe> 
         host: typeof m.host === 'string' ? m.host : undefined,
         online: typeof m.online === 'number' ? m.online : undefined,
         v: typeof m.v === 'number' ? m.v : undefined,
+        kind: m.kind === 'doran' || m.kind === 'lunch' ? m.kind : undefined,
       };
   } catch {
     /* 알아볼 수 없는 답 — 열려 있다는 것만 안다 */

@@ -1,6 +1,7 @@
 import { AC, HAIRLINE, INK, MUTED, MUTED_3, PANEL } from '../theme';
 import { todayText } from '../lib/util';
 import type { View } from '../lib/types';
+import { kindName } from '../share/doran';
 import { shortName } from '../share/protocol';
 import { useData } from '../store/dataStore';
 import { useList } from '../store/listStore';
@@ -191,13 +192,14 @@ function ShareStatusCard({ onSettings }: { onSettings: () => void }) {
   const hostName = shortName(share.room?.members.find((m) => m.host)?.name ?? '호스트');
   const addr = share.info ? `${share.info.addrs[0] ?? share.info.pcName}:${share.info.port}` : '';
   const target = share.target ? `${share.target.host}:${share.target.port}` : '';
+  const kind = kindName(share.room?.kind);
 
   let dot = GRAY;
   let anim = 'none';
   let t: string;
   let sub: string;
   if (share.role === 'host' && live) {
-    [dot, anim, t, sub] = [OK, 'lp-breathe 2s infinite', '같이 고르기 열림', `${people}명 · ${addr}`];
+    [dot, anim, t, sub] = [OK, 'lp-breathe 2s infinite', `${kind} 열림`, `${people}명 · ${addr}`];
   } else if (share.status === 'starting') {
     [dot, t, sub] = [AMBER, '서버 시작 중…', `포트 ${port}`];
   } else if (share.role === 'client' && share.status === 'reconnecting') {
@@ -206,7 +208,7 @@ function ShareStatusCard({ onSettings }: { onSettings: () => void }) {
     [dot, anim, t, sub] = [
       OK,
       'lp-breathe 2s infinite',
-      `${hostName}님 방에 접속`,
+      `${hostName}님 ${share.room?.kind === 'doran' ? '도란식사 ' : ''}방에 접속`,
       `${people}명이 함께 고르는 중`,
     ];
   } else if (share.status === 'connecting') {

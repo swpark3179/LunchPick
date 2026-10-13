@@ -4,9 +4,11 @@
  */
 import { LADDER_PATH_MS } from '../../share/anim';
 import { LH, LW, lx, ly, traceLadder } from '../../share/ladder';
+import { unitOf } from '../../share/doran';
 import type { RoomState } from '../../share/protocol';
 import { useShare } from '../../store/shareStore';
 import { AC, HUES, INK, MUTED, MUTED_3 } from '../../theme';
+import { itemOf } from './items';
 import { IconX, INPUT_BORDER } from './parts';
 
 const RUNG = 'oklch(0.86 0.008 75)';
@@ -19,7 +21,10 @@ export default function LadderModal({ room }: { room: RoomState; me: string }) {
   const gapPct = n > 1 ? (540 / (n - 1) / LW) * 100 : 60;
   const traces = L.cands.map((_, i) => traceLadder(L.rungs, n, i));
   const allRev = L.revealed.every(Boolean);
-  const name = (id: string) => room.restaurants.find((r) => r.id === id)?.name ?? '';
+  // 후보는 점심이면 식당, 도란식사면 선택지다 — 좁은 자리에는 짧은 이름('A안')을 쓴다.
+  const name = (id: string) => itemOf(room, id)?.title ?? '';
+  const short = (id: string) => itemOf(room, id)?.short ?? '';
+  const u = unitOf(room);
   const winners = L.cands.filter((_, i) => L.slots[traces[i].end]);
   const dur = LADDER_PATH_MS * L.speed;
 
@@ -60,7 +65,7 @@ export default function LadderModal({ room }: { room: RoomState; me: string }) {
           <div style={{ flex: 1, minWidth: 220 }}>
             <div style={{ fontSize: 18, fontWeight: 780 }}>사다리 타기</div>
             <div style={{ fontSize: 12.5, color: MUTED, marginTop: 3 }}>
-              후보 {n}곳 중 {L.keep}곳만 남겨요. 이름을 눌러 한 줄씩, 또는 한 번에 출발하세요.
+              {`후보 ${n}${u} 중 ${L.keep}${u}만 남겨요.`} 이름을 눌러 한 줄씩, 또는 한 번에 출발하세요.
             </div>
           </div>
           <div
@@ -259,7 +264,7 @@ export default function LadderModal({ room }: { room: RoomState; me: string }) {
                   transition: 'transform .4s cubic-bezier(.2,.9,.3,1.4), background .3s, color .3s',
                 }}
               >
-                {rev ? (win ? `당첨 · ${name(L.cands[from]).slice(0, 5)}` : '꽝') : '?'}
+                {rev ? (win ? `당첨 · ${short(L.cands[from]).slice(0, 5)}` : '꽝') : '?'}
               </div>
             );
           })}

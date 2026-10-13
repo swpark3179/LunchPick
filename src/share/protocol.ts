@@ -8,12 +8,24 @@
  * - 식당 세부정보를 보는 건 각자 화면에서만 일어난다 — 상태에 넣지 않는다.
  * - AI 에 보낸 원문은 호스트 메모리에만 있고 방송하지 않는다. 키워드만 공개한다.
  * - '누가 어느 카드를 보고 있는지'(focus)는 자주 바뀌므로 방 상태와 따로, 작은 메시지로 보낸다.
+ * - 방은 두 종류다. 점심(lunch)은 호스트의 식당 목록으로 고르고, 도란식사(doran)는 방 안에서 식당·메뉴를
+ *   입력해 '선택지'(식당 + 메뉴 구성)를 만들어 좁힌다. 도란식사에서 살아 있는 선택지는 cands 에 둔다
+ *   (그래서 사다리·하트 걸기가 그대로 돈다). 방 종류에 맞지 않는 Action 은 호스트가 거절한다.
  */
 import type { Menu, Restaurant } from '../lib/types';
 import { HUES } from '../theme';
 
 /** 호환되지 않게 바뀌면 올린다. 다르면 접속을 거절한다. */
-export const PROTOCOL = 4;
+export const PROTOCOL = 5;
+
+export type RoomKind = 'lunch' | 'doran';
+
+/** 호스트가 앱을 끄면 참여자들에게 남기는 말 (Rust 가 맡아 뒀다가 보낸다 — transport.ts › start) */
+export const HOST_QUIT_REASON = '호스트가 점심픽을 종료했어요.';
+
+/** 채팅 리액션 — 순서대로 고르기 줄과 칩에 놓인다. 모양·이름은 화면(reactions.ts)이 정한다. */
+export const REACTION_KEYS = ['yes', 'no', 'good', 'thanks', 'smile', 'wow', 'oops', 'tear', 'check'] as const;
+export type ReactKey = (typeof REACTION_KEYS)[number];
 
 export const LIMITS = {
   name: 12,
@@ -46,6 +58,14 @@ export const LIMITS = {
   reserveNote: 300,
   /** 같은 사람을 다시 부를 수 있기까지 (ms) */
   callCooldownMs: 30000,
+  /** 도란식사 — 방에 올릴 수 있는 식당 수 */
+  doranRests: 40,
+  /** 도란식사 — 한 번에 만들 수 있는 선택지 수 */
+  choices: 30,
+  choiceLabel: 20,
+  choiceNote: 100,
+  /** 도란식사 — 총사용금액 상한 */
+  budgetMax: 99_999_999,
 } as const;
 
 export type Member = {
@@ -60,7 +80,15 @@ export type Member = {
 };
 
 export type ChatMsg =
-  | { id: string; at: number; kind: 'chat'; from: string; text: string }
+  | {
+      id: string;
+      at: number;
+      kind: 'chat';
+      from: string;
+      text: string;
+      /** 리액션 -> 누른 사람 id 들 (아무도 없으면 키가 없다) */
+      react?: Partial<Record<ReactKey, string[]>>;
+    }
   | { id: string; at: number; kind: 'sys'; text: string; by?: string };
 
 export type AiTurn = {
@@ -135,7 +163,24 @@ export type PrefRun = {
   closed: { by: string; at: number } | null;
 };
 
-export type Final = { restId: string; by: string; at: number };
+/** 확정. 도란식사면 choiceId 가 확정된 선택지이고 restId 는 그 선택지의 식당이다. */
+export type Final = { restId: string; by: string; at: number; choiceId?: string };
+
+/**
+ * 도란식사의 선택지 — 식당 하나 + (있으면) 메뉴 구성. 같은 식당으로 여러 개를 만들 수 있다.
+ * no 는 방 안에서 오르기만 하는 번호라 지워도 다시 쓰지 않는다 ('A안', 'B안' …).
+ */
+export type Choice = {
+  id: string;
+  no: number;
+  restId: string;
+  items: OrderItem[];
+  /** 붙인 이름 (없으면 빈 문자열) */
+  label: string;
+  note: string;
+  by: string;
+  at: number;
+};
 
 /**
  * 메뉴 한 줄. 식당 목록의 메뉴면 menuId 가 있고, 목록에 없어 직접 적은 메뉴는 이름만 있다.
@@ -185,6 +230,7 @@ export type Removed = { id: string; name: string; by: string; at: number };
 export type RoomState = {
   v: number;
   rev: number;
+  kind: RoomKind;
   hostId: string;
   /** 호스트 PC 에 AI 키가 등록돼 있는지 — 없으면 키워드 정렬로 대신한다 */
   aiReady: boolean;
@@ -223,6 +269,22 @@ export type RoomState = {
   chat: ChatMsg[];
   sync: SyncRun | null;
   removed: Removed[];
+  /** 도란식사 — 선택지 (만든 순서). 살아 있는 건 cands 에 있다. 점심 방에서는 비어 있다. */
+  choices: Choice[];
+  /** 도란식사 — 마지막으로 매긴 선택지 번호 */
+  choiceSeq: number;
+  /** 도란식사 — 총사용금액 (정하지 않았으면 null) */
+  budget: number | null;
+};
+
+/** 도란식사에서 입력·수정하는 식당 (id 가 없으면 새 식당) */
+export type DoranRestInput = {
+  id?: string;
+  name: string;
+  category: string;
+  phone: string;
+  memo: string;
+  menus: { id?: string; name: string; price: number | null }[];
 };
 
 export type EditableRest = { id: string; phone: string; memo: string; menus: Menu[] };
@@ -232,7 +294,9 @@ export type Action =
   | { type: 'typing' }
   | { type: 'focus'; restId: string | null }
   | { type: 'dislike'; restId: string }
+  /** 후보에 올리기/내리기 — 도란식사에서는 선택지(restId 자리에 선택지 id)를 빼기/되살리기 */
   | { type: 'cand'; restId: string }
+  /** 무작위 — 점심은 n곳을 후보로 올리고, 도란식사는 살아 있는 선택지 중 n개만 남긴다 */
   | { type: 'roll'; count: number }
   | { type: 'ai'; prompt: string; ref?: string }
   | { type: 'aiReset' }
@@ -267,7 +331,21 @@ export type Action =
   | { type: 'syncAnswer'; id: string; accept: boolean; restaurants?: Restaurant[] }
   | { type: 'profile'; name: string; hue: number }
   /** 한 사람을 부른다 — 그 사람 PC 에서 점심픽 창이 한 번 맨 앞으로 뜬다 */
-  | { type: 'call'; to: string };
+  | { type: 'call'; to: string }
+  /** 남의 채팅에 리액션을 달거나(없으면) 뗀다(있으면) */
+  | { type: 'react'; msgId: string; key: ReactKey }
+  // ---- 도란식사 (점심 방에서는 거절)
+  /** 식당 추가(id 없음)·수정 */
+  | { type: 'dRestSave'; rest: DoranRestInput }
+  /** 내 PC 에 저장해 둔 식당들을 방에 올린다 */
+  | { type: 'dRestLoad'; restaurants: Restaurant[] }
+  | { type: 'dRestRemove'; restId: string }
+  | { type: 'choiceAdd'; restId: string; items: OrderItem[]; label?: string; note?: string }
+  | { type: 'choiceEdit'; id: string; items: OrderItem[]; label?: string; note?: string }
+  | { type: 'choiceRemove'; id: string }
+  | { type: 'choiceFinal'; id: string }
+  /** 총사용금액 (null 이면 지운다) */
+  | { type: 'budget'; amount: number | null };
 
 /** 참여자 → 호스트 */
 export type C2H =
@@ -298,7 +376,7 @@ export type H2C =
   /** 누군가(멤버 id) 나를 불렀다 — 불린 사람에게만 간다 */
   | { t: 'call'; by: string }
   /** probe 에 대한 답 */
-  | { t: 'info'; v: number; host: string; online: number }
+  | { t: 'info'; v: number; host: string; online: number; kind?: RoomKind }
   | { t: 'err'; msg: string }
   | { t: 'bye'; reason: string };
 

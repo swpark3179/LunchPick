@@ -1,11 +1,13 @@
 /**
  * 최종 확정 (시안: 최종 확정) — 누구든 확정하면 모두의 화면에 색종이와 함께 뜬다.
  * 닫는 건 각자 한다. '다시 고르기' 는 모두에게 확정을 푼다. 닫으면 메뉴 고르기(OrderPanel)로 이어진다.
+ * 도란식사는 확정된 선택지의 메뉴 구성·합계·예산 비교를 보여 주고, 닫으면 예약(DoranFinalPanel)으로 이어진다.
  */
 import { useMemo } from 'react';
 
 import { copyText } from '../../lib/ipc';
 import { hhmm } from '../../lib/util';
+import { budgetFit, choiceName, choiceOf, itemsLine, moneyText } from '../../share/doran';
 import { type RoomState, shortName } from '../../share/protocol';
 import { useShare } from '../../store/shareStore';
 import { toast } from '../../store/uiStore';
@@ -26,6 +28,8 @@ export default function FinalModal({
   const act = useShare((s) => s.act);
   const f = room.final!;
   const r = room.restaurants.find((x) => x.id === f.restId);
+  const doran = room.kind === 'doran';
+  const choice = doran && f.choiceId ? choiceOf(room, f.choiceId) : undefined;
   const ppl = room.members.filter((m) => m.online);
   const hue = r ? (CH[r.category] ?? 300) : 300;
   const byText = `${f.by === me ? '내가' : `${shortName(room.members.find((m) => m.id === f.by)?.name ?? '누군가')}님이`} ${hhmm(f.at)}에 확정`;
@@ -47,13 +51,18 @@ export default function FinalModal({
     [f.at],
   );
 
-  if (!r) return null;
-  const menus = r.menus.length
-    ? r.menus
-        .slice(0, 3)
-        .map((m) => `${m.name} ${m.price ? m.price.toLocaleString('ko-KR') : ''}`.trim())
-        .join(' · ')
-    : '메뉴 미등록';
+  if (!r || (doran && !choice)) return null;
+  const menus = choice
+    ? choice.items.length
+      ? itemsLine(choice.items)
+      : '식당만 정했어요 · 메뉴는 예약할 때 정해요'
+    : r.menus.length
+      ? r.menus
+          .slice(0, 3)
+          .map((m) => `${m.name} ${m.price ? m.price.toLocaleString('ko-KR') : ''}`.trim())
+          .join(' · ')
+      : '메뉴 미등록';
+  const fit = choice ? budgetFit(choice.items, room.budget) : null;
 
   return (
     <div
@@ -115,7 +124,7 @@ export default function FinalModal({
           <span
             style={{ fontSize: 12.5, fontWeight: 750, color: 'oklch(0.45 0.14 40)', letterSpacing: '.04em' }}
           >
-            오늘 점심, 확정!
+            {doran ? '도란식사, 확정!' : '오늘 점심, 확정!'}
           </span>
           <span
             style={{
@@ -126,7 +135,7 @@ export default function FinalModal({
               animation: 'lp-pop .6s .15s cubic-bezier(.2,.9,.3,1.4) both',
             }}
           >
-            {r.name}
+            {choice ? `${choiceName(choice)} ${choice.label || r.name}` : r.name}
           </span>
           <span
             style={{
@@ -141,7 +150,7 @@ export default function FinalModal({
               alignItems: 'center',
             }}
           >
-            {r.category}
+            {choice?.label ? `${r.name} · ${r.category}` : r.category}
           </span>
         </div>
         <div style={{ padding: '18px 26px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -180,6 +189,19 @@ export default function FinalModal({
             </span>
             <span style={{ fontSize: 13.5, lineHeight: 1.5, flex: 1 }}>{menus}</span>
           </div>
+          {choice && choice.items.length ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 12, color: 'oklch(0.55 0.012 60)', width: 52 }}>합계</span>
+              <span style={{ fontSize: 15, fontWeight: 760, fontVariantNumeric: 'tabular-nums' }}>
+                {moneyText(choice.items)}
+              </span>
+              {fit ? (
+                <span style={{ fontSize: 12.5, fontWeight: 650, color: 'oklch(0.5 0.012 60)' }}>
+                  · 예산 {fit.text}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ fontSize: 12, color: 'oklch(0.55 0.012 60)', width: 52 }}>함께</span>
             <div style={{ display: 'flex' }}>
@@ -205,7 +227,9 @@ export default function FinalModal({
               color: 'oklch(0.42 0.012 60)',
             }}
           >
-            이제 각자 먹을 메뉴를 골라요. 예약한 사람이 ‘예약 완료’를 누르면 모두에게 알려져요.
+            {doran
+              ? '이제 누군가 식당에 예약해요. 예약한 사람이 ‘예약 완료’를 누르면 모두에게 알려져요.'
+              : '이제 각자 먹을 메뉴를 골라요. 예약한 사람이 ‘예약 완료’를 누르면 모두에게 알려져요.'}
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
             <button
@@ -243,7 +267,7 @@ export default function FinalModal({
                 cursor: 'pointer',
               }}
             >
-              메뉴 고르러 가기
+              {doran ? '예약하러 가기' : '메뉴 고르러 가기'}
             </button>
           </div>
         </div>

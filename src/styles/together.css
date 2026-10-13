@@ -296,3 +296,38 @@
   border-color: oklch(0.56 0.16 40) !important;
   box-shadow: 0 0 0 3px oklch(0.56 0.16 40 / 0.15);
 }
+
+/* ---------------- 채팅 리액션 ---------------- */
+/* 남의 말풍선에 마우스를 올리면 고르기 줄이 뜬다. 떠 있는 줄은 위·아래 메시지를 덮어야 해서 그 줄을 위로 올린다. */
+.tg-msg:hover,
+.tg-msg:focus-within {
+  z-index: 3;
+}
+.tg-react-bar {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+}
+.tg-msg:hover .tg-react-bar,
+.tg-msg:focus-within .tg-react-bar {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+.tg-react-pick {
+  transition: transform 0.12s;
+}
+.tg-react-pick:hover {
+  background: oklch(0.95 0.012 60) !important;
+  transform: scale(1.2);
+}
+.tg-react-who {
+  display: none;
+}
+.tg-react-chip:hover .tg-react-who,
+.tg-react-chip:focus-within .tg-react-who {
+  display: flex;
+}
