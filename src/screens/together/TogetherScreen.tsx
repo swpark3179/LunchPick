@@ -15,7 +15,8 @@ import type { RoomState } from '../../share/protocol';
 import { reservationAuthor, shortName } from '../../share/protocol';
 import { useShare } from '../../store/shareStore';
 import { useUi } from '../../store/uiStore';
-import { AC, AINK, MUTED } from '../../theme';
+import { MUTED } from '../../theme';
+import DoranRoom from '../doran/DoranRoom';
 import AiTurnModal from './AiTurnModal';
 import Board from './Board';
 import ChatPanel from './ChatPanel';
@@ -28,6 +29,7 @@ import { IconBack, IconCheck, IconSync, StatusDot } from './parts';
 import PrefStage from './PrefStage';
 import ReservedModal from './ReservedModal';
 import ReserveModal from './ReserveModal';
+import StepTrack from './StepTrack';
 import SyncBanner from './SyncBanner';
 import { useRollAnim } from './useRoomAnim';
 
@@ -38,7 +40,8 @@ export default function TogetherScreen() {
   useEffect(() => {
     if (!room) setView('settings');
   }, [room, setView]);
-  return room ? <Room room={room} /> : null;
+  if (!room) return null;
+  return room.kind === 'doran' ? <DoranRoom room={room} /> : <Room room={room} />;
 }
 
 function Room({ room }: { room: RoomState }) {
@@ -323,6 +326,7 @@ function Room({ room }: { room: RoomState }) {
  * ①가기 싫은 곳 빼기 ─ ②후보 올리기 ─ ③추려내기 ─ ④최종 확정 ─ ⑤메뉴 고르기 ─ ⑥예약 완료.
  * 지금 단계는 은은하게 빛난다. 머리 폭(최소 창 1040px)에 맞게 확정 전에는 ①~④만, 확정 뒤에는 ④~⑥만 보이고,
  * 지나간 ④⑤는 체크 동그라미로 줄인다 (이름은 툴팁, 식당 이름은 머리의 '오늘은 …' 에 보인다).
+ * 그리는 건 StepTrack (도란식사 방도 같이 쓴다).
  */
 function Steps({ room }: { room: RoomState }) {
   const exclCount = room.exclOrder.length;
@@ -355,81 +359,5 @@ function Steps({ room }: { room: RoomState }) {
     ['메뉴 고르기', room.final ? `${picked}/${people.length}` : ''],
     ['예약 완료', res ? shortName(room.members.find((m) => m.id === res.by)?.name ?? '') : ''],
   ];
-  const last = steps.length - 1;
-  const shown = room.final ? [3, 4, 5] : [0, 1, 2, 3];
-  return (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 4,
-        minWidth: 0,
-        flexWrap: 'wrap',
-      }}
-    >
-      {shown.map((i, k) => {
-        const [label, count] = steps[i];
-        const done = i < at;
-        const cur = i === at;
-        const mini = room.final && done;
-        return (
-          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <div
-              title={mini ? label : undefined}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 7,
-                height: 30,
-                padding: mini ? '0 5px' : '0 12px 0 5px',
-                borderRadius: 15,
-                background: cur ? AC : done ? 'oklch(0.965 0.025 50)' : 'oklch(0.955 0.005 75)',
-                color: cur ? 'white' : done ? AINK : MUTED,
-                fontSize: 12.5,
-                fontWeight: 650,
-                whiteSpace: 'nowrap',
-                transition: 'background .4s, color .4s',
-                animation: cur && i < last ? 'lp-glow 2.2s infinite' : 'none',
-              }}
-            >
-              <span
-                style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: '50%',
-                  background: cur ? 'oklch(1 0 0 / .22)' : done ? 'oklch(0.9 0.05 50)' : 'white',
-                  color: cur ? 'white' : done ? AINK : MUTED,
-                  fontSize: 11,
-                  fontWeight: 800,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transition: 'background .4s',
-                }}
-              >
-                {done ? <IconCheck size={11} stroke={3} /> : i + 1}
-              </span>
-              {mini ? null : label}
-              {count && !mini ? (
-                <span style={{ fontVariantNumeric: 'tabular-nums', opacity: 0.75 }}>{count}</span>
-              ) : null}
-            </div>
-            {k < shown.length - 1 ? (
-              <div
-                style={{
-                  width: 16,
-                  height: 2,
-                  borderRadius: 2,
-                  background: done ? 'oklch(0.8 0.08 50)' : 'oklch(0.9 0.006 75)',
-                  transition: 'background .4s',
-                }}
-              />
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
-  );
+  return <StepTrack steps={steps} at={at} shown={room.final ? [3, 4, 5] : [0, 1, 2, 3]} compact={!!room.final} />;
 }

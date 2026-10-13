@@ -206,7 +206,7 @@ function RoomRow({
             textOverflow: 'ellipsis',
           }}
         >
-          {name ? `${name}님의 방` : r.addr}
+          {name ? `${name}님의 ${info?.kind === 'doran' ? '도란식사 ' : ''}방` : r.addr}
         </span>
         <span
           style={{

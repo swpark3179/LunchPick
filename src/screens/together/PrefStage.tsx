@@ -17,7 +17,6 @@
  */
 import { type MutableRefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import type { Restaurant } from '../../lib/types';
 import {
   PREF_BURST_MS,
   PREF_DROP_MS,
@@ -39,10 +38,11 @@ import {
   voters,
   zeroIds,
 } from '../../share/pref';
+import { unitOf } from '../../share/doran';
 import { type Member, type PrefRun, type RoomState, shortName } from '../../share/protocol';
 import { speedMul, useAnimSpeed } from '../../store/settingsStore';
 import { useShare } from '../../store/shareStore';
-import { AC, AINK, CH, HUES, INK, MUTED, MUTED_3, SOFT } from '../../theme';
+import { AC, AINK, HUES, INK, MUTED, MUTED_3, SOFT } from '../../theme';
 import {
   Avatar,
   AvatarStack,
@@ -58,6 +58,7 @@ import {
   shakeAnim,
   whoShort,
 } from './parts';
+import { finalAct, itemOf, type ItemView } from './items';
 
 /** 보낸 내 하트가 이 안에 돌아오지 않으면 방 상태를 따른다 (OrderPanel 과 같은 방식) */
 const BET_SETTLE_MS = 1500;
@@ -146,8 +147,9 @@ export default function PrefStage({
   const maxT = Math.max(0, ...t);
   const who = voters(view, room.members);
   const left = run.hearts - betSum(draft.bet);
-  const rest = (id: string) => room.restaurants.find((r) => r.id === id);
-  const nameOf = (id: string) => rest(id)?.name ?? '';
+  // 후보는 점심이면 식당, 도란식사면 선택지다 (items.ts).
+  const nameOf = (id: string) => itemOf(room, id)?.title ?? '';
+  const u = unitOf(room);
   /** '내가' / '서원님이' */
   const byWho = (id: string) => (id === me ? '내가' : `${whoShort(room, me, id)}님이`);
 
@@ -254,7 +256,7 @@ export default function PrefStage({
 
   const cand = (i: number) => ({
     i,
-    r: rest(run.cands[i]),
+    it: itemOf(room, run.cands[i]),
     total: t[i],
     rank: rk[i],
     shared: rk.filter((x) => x === rk[i]).length > 1,
@@ -275,7 +277,7 @@ export default function PrefStage({
     onPlus: plus,
     onMinus: minus,
     onInfo,
-    onFinal: (id: string) => act({ type: 'final', restId: id }),
+    onFinal: (id: string) => act(finalAct(room, id)),
   };
 
   return (
@@ -318,8 +320,8 @@ export default function PrefStage({
             </div>
             <div style={{ fontSize: 12.5, color: MUTED, marginTop: 4, lineHeight: 1.5 }}>
               {closed
-                ? `후보 ${n}곳 · 하트 ${run.hearts}개씩 · 하트가 많은 순서대로 섰어요`
-                : `후보 ${n}곳에 하트 ${run.hearts}개를 나눠 걸어요 · 한 곳에 몰면 그만큼 더 가고 싶다는 뜻 · 건 하트는 모두에게 바로 보여요`}
+                ? `후보 ${n}${u} · 하트 ${run.hearts}개씩 · 하트가 많은 순서대로 섰어요`
+                : `후보 ${n}${u}에 하트 ${run.hearts}개를 나눠 걸어요 · ${u === '곳' ? '한 곳' : '한 선택지'}에 몰면 그만큼 더 가고 싶다는 뜻 · 건 하트는 모두에게 바로 보여요`}
             </div>
           </div>
           <div
@@ -507,7 +509,7 @@ export default function PrefStage({
               <button
                 type="button"
                 className="tg-accent"
-                onClick={() => act({ type: 'final', restId: winners[0] })}
+                onClick={() => act(finalAct(room, winners[0]))}
                 style={{
                   ...btnAccent(36, 16),
                   animation: revealing
@@ -555,7 +557,8 @@ export default function PrefStage({
 
 type CandView = {
   i: number;
-  r: Restaurant | undefined;
+  /** 후보 (점심: 식당, 도란식사: 선택지) */
+  it: ItemView | undefined;
   total: number;
   rank: number;
   shared: boolean;
@@ -811,15 +814,11 @@ function Pile({
   );
 }
 
-/** 식당 이름 · 분류 · 대표 메뉴 — 이름을 누르면 식당 정보(나만 보기) */
+/** 후보 이름 · 한 줄 설명(분류·대표 메뉴 / 메뉴 구성·합계) — 이름을 누르면 식당 정보(나만 보기) */
 function CandHead({ c, onInfo }: { c: CandView; onInfo: (id: string) => void }) {
-  const r = c.r;
-  if (!r) return null;
-  const hue = CH[r.category] ?? 300;
-  const menus = (r.menus.some((m) => m.fav) ? r.menus.filter((m) => m.fav) : r.menus)
-    .slice(0, 2)
-    .map((m) => m.name)
-    .join(' · ');
+  const it = c.it;
+  if (!it) return null;
+  const hue = it.hue;
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -836,9 +835,9 @@ function CandHead({ c, onInfo }: { c: CandView; onInfo: (id: string) => void }) 
           role="button"
           tabIndex={0}
           title="식당 정보 (나만 보기)"
-          onClick={() => onInfo(r.id)}
+          onClick={() => onInfo(it.restId)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') onInfo(r.id);
+            if (e.key === 'Enter') onInfo(it.restId);
           }}
           style={{
             fontSize: 15,
@@ -849,7 +848,7 @@ function CandHead({ c, onInfo }: { c: CandView; onInfo: (id: string) => void }) 
             whiteSpace: 'nowrap',
           }}
         >
-          {r.name}
+          {it.title}
         </span>
       </div>
       <div
@@ -862,8 +861,7 @@ function CandHead({ c, onInfo }: { c: CandView; onInfo: (id: string) => void }) 
           whiteSpace: 'nowrap',
         }}
       >
-        {r.category}
-        {menus ? ` · ${menus}` : ''}
+        {it.sub}
       </div>
     </div>
   );
@@ -871,7 +869,7 @@ function CandHead({ c, onInfo }: { c: CandView; onInfo: (id: string) => void }) 
 
 /** 합계 · 건 사람 · −/+ (마감 뒤에는 순위 · 확정) */
 function CandFoot({ c, ...p }: { c: CandView } & Common) {
-  const name = c.r?.name ?? '';
+  const name = c.it?.title ?? '';
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 26 }}>
@@ -901,7 +899,7 @@ function CandFoot({ c, ...p }: { c: CandView } & Common) {
         <button
           type="button"
           className={c.win ? 'tg-accent' : 'tg-soft'}
-          onClick={() => c.r && p.onFinal(c.r.id)}
+          onClick={() => c.it && p.onFinal(c.it.id)}
           style={c.win ? btnAccent(32, 12) : btnSoft(32, 12)}
         >
           {c.win ? <IconCheck size={12} stroke={3} /> : null}
@@ -1199,7 +1197,7 @@ function Seesaw({ a, b, ...p }: { a: CandView; b: CandView } & Common) {
           {sum
             ? a.total === b.total
               ? '팽팽해요'
-              : `${(a.total > b.total ? a : b).r?.name ?? ''} 쪽으로 기울었어요`
+              : `${(a.total > b.total ? a : b).it?.title ?? ''} 쪽으로 기울었어요`
             : '하트를 걸면 기울어요'}
         </div>
       </div>

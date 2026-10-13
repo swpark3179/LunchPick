@@ -21,6 +21,7 @@ export const DEFAULTS: Settings = {
   autoStart: false,
   quiet: false,
   shareMode: 'host',
+  hostKind: 'lunch',
   joinAddr: '',
   recentHosts: [],
   animSpeed: '보통',
@@ -74,6 +75,7 @@ function persistable(s: SettingsState): Settings {
     autoStart: s.autoStart,
     quiet: s.quiet,
     shareMode: s.shareMode,
+    hostKind: s.hostKind,
     joinAddr: s.joinAddr,
     recentHosts: s.recentHosts,
     animSpeed: s.animSpeed,
@@ -113,6 +115,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
       fabrix: { ...DEFAULTS.fabrix, ...(loaded?.fabrix ?? {}) },
       fabrixModels: loaded?.fabrixModels ?? [],
       recentHosts: cleanRecents(loaded?.recentHosts),
+      hostKind: loaded?.hostKind === 'doran' ? 'doran' : 'lunch',
       // 예전 버전의 기본값 '나' 는 다른 사람에게 이름으로 보이면 헷갈리니 비워서 다시 정하게 한다.
       name: loaded?.name === '나' ? '' : (loaded?.name ?? DEFAULTS.name),
       ready: true,

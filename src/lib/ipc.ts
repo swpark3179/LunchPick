@@ -71,6 +71,31 @@ export async function dataDirPath(): Promise<string> {
   return invoke<string>('data_dir_path');
 }
 
+// ---------------------------------------------------------------- 도란식사 식당 보관함 (식당마다 파일 하나)
+
+const LS_DORAN = 'lunchpick.dev.doran';
+
+/** 보관함 파일들 — 모양 검증은 doranStore 가 한다 */
+export async function doranList(): Promise<unknown[]> {
+  if (!hasTauri) return Object.values(lsRead<Record<string, unknown>>(LS_DORAN) ?? {});
+  return invoke<unknown[]>('doran_list');
+}
+
+export async function doranSave(id: string, entry: unknown): Promise<void> {
+  // 개발 모드에서는 탭 여러 개가 같은 저장소를 쓰니, 쓰기 직전에 다시 읽는다.
+  if (!hasTauri) return lsWrite(LS_DORAN, { ...(lsRead<Record<string, unknown>>(LS_DORAN) ?? {}), [id]: entry });
+  return invoke<void>('doran_save', { id, entry });
+}
+
+export async function doranDelete(id: string): Promise<void> {
+  if (!hasTauri) {
+    const all = { ...(lsRead<Record<string, unknown>>(LS_DORAN) ?? {}) };
+    delete all[id];
+    return lsWrite(LS_DORAN, all);
+  }
+  return invoke<void>('doran_delete', { id });
+}
+
 // ---------------------------------------------------------------- 비밀값
 // 읽기 커맨드는 의도적으로 없다. 키는 Rust 안에서만 읽힌다.
 

@@ -3,6 +3,8 @@ mod secrets;
 mod share;
 mod storage;
 
+use tauri::{Manager, RunEvent};
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -16,6 +18,9 @@ pub fn run() {
             storage::read_text_file,
             storage::write_text_file,
             storage::data_dir_path,
+            storage::doran_list,
+            storage::doran_save,
+            storage::doran_delete,
             secrets::secret_set,
             secrets::secret_delete,
             secrets::secret_exists,
@@ -33,6 +38,12 @@ pub fn run() {
             share::share_client_disconnect,
             share::share_probe,
         ])
-        .run(tauri::generate_context!())
-        .expect("점심픽을 실행하는 중 오류가 발생했습니다");
+        .build(tauri::generate_context!())
+        .expect("점심픽을 실행하는 중 오류가 발생했습니다")
+        .run(|app, event| {
+            // 어떻게 꺼지든(✕·Alt+F4·작업표시줄) 같이 고르기 참여자들에게 작별 인사를 보내고 연결을 닫는다.
+            if let RunEvent::Exit = event {
+                share::shutdown(&app.state::<share::ShareState>());
+            }
+        });
 }

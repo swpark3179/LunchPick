@@ -20,7 +20,11 @@ export type HostEvent =
 export type ClientEvent = { kind: 'msg'; data: string } | { kind: 'close'; reason?: string };
 
 export interface HostTransport {
-  start(port: number, onEvent: (e: HostEvent) => void): Promise<HostInfo>;
+  /**
+   * will — 앱이 갑자기 꺼질 때(Alt+F4·작업표시줄 닫기 등) 프론트를 거치지 않고 참여자들에게 보낼 텍스트.
+   * Rust(개발 모드에서는 탭의 beforeunload)가 맡아 뒀다가 보낸 뒤 연결을 닫는다.
+   */
+  start(port: number, onEvent: (e: HostEvent) => void, will?: string): Promise<HostInfo>;
   send(peers: string[], text: string): void;
   kick(peer: string): void;
   stop(): Promise<void>;
@@ -58,12 +62,12 @@ function tauriHost(): HostTransport {
   };
 
   return {
-    async start(port, onEvent) {
+    async start(port, onEvent, will) {
       await ensureListener();
       gen = nextGen();
       handler = onEvent;
       try {
-        return await invoke<HostInfo>('share_host_start', { port, gen });
+        return await invoke<HostInfo>('share_host_start', { port, gen, will: will ?? null });
       } catch (e) {
         handler = null;
         throw e;
@@ -144,13 +148,19 @@ function devHost(): HostTransport {
   let ch: BroadcastChannel | null = null;
   let emit: ((e: HostEvent) => void) | null = null;
   const peers = new Set<string>();
-  const onUnload = () => ch?.postMessage({ k: 'down' } satisfies Wire);
+  let lastWill = '';
+  // 탭을 닫으면 앱이 꺼진 것처럼 — 유언을 먼저 보내고 닫는다.
+  const onUnload = () => {
+    if (lastWill) for (const p of peers) ch?.postMessage({ k: 'h2c', to: p, data: lastWill } satisfies Wire);
+    ch?.postMessage({ k: 'down' } satisfies Wire);
+  };
 
   return {
-    async start(port, onEvent) {
+    async start(port, onEvent, will) {
       ch?.close();
       peers.clear();
       emit = onEvent;
+      lastWill = will ?? '';
       ch = new BroadcastChannel(chName(port));
       ch.onmessage = ({ data: m }: MessageEvent<Wire>) => {
         if (m.k === 'open') {
@@ -183,6 +193,7 @@ function devHost(): HostTransport {
       ch?.close();
       ch = null;
       emit = null;
+      lastWill = '';
       peers.clear();
     },
   };
@@ -288,6 +299,12 @@ export async function probeHost(host: string, port: number, text: string): Promi
   if (!hasTauri) return devProbe(port, text);
   return invoke<string | null>('share_probe', { host, port, text });
 }
+
+/**
+ * 그 주소에 서버가 없다는 오류인지 (Rust: 연결 거부, 개발 모드: 채널에 답이 없음).
+ * 다시 붙는 중에 이게 이어지면 호스트가 앱을 껐다고 본다.
+ */
+export const isRefused = (msg: string) => /호스트가 서버를 켰는지|찾지 못했어요/.test(msg);
 
 /** 서버를 켜기 전에도 내 주소를 보여주기 위해 쓴다. */
 export async function localInfo(port: number): Promise<HostInfo> {

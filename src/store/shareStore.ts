@@ -11,8 +11,9 @@ import { create } from 'zustand';
 import { windowFlash, windowSummon } from '../lib/ipc';
 import { namesFor } from '../lib/myMenus';
 import { mergeRestaurants, nameKey } from '../lib/shareFormat';
-import type { RecentHost } from '../lib/types';
+import type { RecentHost, Restaurant } from '../lib/types';
 import { joinRoom, type ClientConn } from '../share/client';
+import { kindName, restSig } from '../share/doran';
 import { createHostRoom, type HostRoom } from '../share/host';
 import { itemKey, myMenuItems } from '../share/order';
 import {
@@ -23,11 +24,13 @@ import {
   LIMITS,
   type Removed,
   reservationAuthor,
+  type RoomKind,
   type RoomState,
   shortName,
 } from '../share/protocol';
 import { clientTransport, type HostInfo, hostTransport } from '../share/transport';
 import { useData } from './dataStore';
+import { useDoran } from './doranStore';
 import { RECENT_MAX, useSettings } from './settingsStore';
 import { toast, useUi } from './uiStore';
 
@@ -44,6 +47,8 @@ const AUTO_ENTER_MS = 1100;
 const HOST_STEP_MS = [650, 650, 600];
 const CLIENT_STEP_MS = [800, 700, 0, 550];
 const SYNC_TICK_MS = 38;
+/** 도란식사 방의 식당을 내 보관함에 저장하기까지 모으는 시간 */
+const DORAN_SAVE_MS = 800;
 
 type ShareStore = {
   role: ShareRole;
@@ -64,12 +69,15 @@ type ShareStore = {
   unread: number;
   /** 세션이 끝난 이유 (호스트 종료·내보냄·연결 끊김). 확인하면 지운다. */
   ended: string | null;
+  /** 끝난 방의 종류 (안내 창 제목에 쓴다) */
+  endedKind: RoomKind | null;
   /** 누군가 나를 불렀다 (부른 사람의 id·짧은 이름). 확인하면 지운다. */
   called: { by: string; name: string } | null;
   /** 확정됐을 때 늘 먹는 메뉴로 골라 둔 것 — 메뉴 고르기에서 그 줄을 잠깐 빛낸다 */
   autoPicked: { final: number; at: number; keys: string[] } | null;
 
-  startHost: () => Promise<boolean>;
+  /** 서버를 켠다 — 점심 같이 고르기(기본) 또는 도란식사 정하기 */
+  startHost: (kind?: RoomKind) => Promise<boolean>;
   stopHost: () => Promise<void>;
   join: (addr: string) => Promise<boolean>;
   cancelJoin: () => void;
@@ -182,6 +190,7 @@ function roomEffects(room: RoomState, me: string, role: ShareRole) {
     return;
   }
 
+  const where = kindName(room.kind);
   // 예약이 끝나면(고쳐지면) 방 밖에 있는 사람에게도 알린다. 방 안에서는 예약 알림 창이 뜬다.
   const v = room.reservation;
   if (v && !seenReserve.has(v.at)) {
@@ -191,7 +200,7 @@ function roomEffects(room: RoomState, me: string, role: ShareRole) {
       const who = shortName(room.members.find((m) => m.id === author)?.name ?? '누군가');
       const rn = room.restaurants.find((r) => r.id === v.restId)?.name ?? '';
       toast(
-        `${who}님이 ‘${rn}’ ${v.editedBy ? '예약 내용을 고쳤어요' : '예약을 마쳤어요'} · 같이 고르기에서 확인해 주세요`,
+        `${who}님이 ‘${rn}’ ${v.editedBy ? '예약 내용을 고쳤어요' : '예약을 마쳤어요'} · ${where}에서 확인해 주세요`,
       );
     }
   }
@@ -211,10 +220,11 @@ function roomEffects(room: RoomState, me: string, role: ShareRole) {
     seenPref.add(P.id);
     if (P.by !== me && !inRoom()) {
       const who = shortName(room.members.find((m) => m.id === P.by)?.name ?? '누군가');
-      toast(`${who}님이 하트 걸기를 열었어요 · 같이 고르기에서 하트를 걸어 주세요`);
+      toast(`${who}님이 하트 걸기를 열었어요 · ${where}에서 하트를 걸어 주세요`);
     }
   }
-  if (role !== 'client') return;
+  // 아래는 참여자의 점심 식당 목록(내 data.json)에 반영하는 일이다 — 도란식사 방은 내 점심 목록과 상관없다.
+  if (role !== 'client' || room.kind !== 'lunch') return;
 
   const fresh = room.removed.filter((r) => !seenRemoved.has(removedKey(r)));
   if (fresh.length) {
@@ -250,6 +260,37 @@ function roomEffects(room: RoomState, me: string, role: ShareRole) {
       );
     }
   }
+}
+
+// ---------------------------------------------------------------- 도란식사 식당 → 내 보관함
+
+/** 이번 세션에서 마지막으로 보관함에 넘긴 식당 서명 (식당 id -> 서명) */
+const doranSigs = new Map<string, string>();
+const doranPending = new Map<string, Restaurant>();
+let doranTimer: ReturnType<typeof setTimeout> | undefined;
+
+const flushDoran = () => {
+  clearTimeout(doranTimer);
+  doranTimer = undefined;
+  if (!doranPending.size) return;
+  const list = [...doranPending.values()];
+  doranPending.clear();
+  void useDoran.getState().remember(list);
+};
+
+/**
+ * 도란식사 방에 올라온 식당은 호스트·참여자 모두 각자 보관함에 저장한다 (바뀐 것만, 잠시 모아서).
+ * 들어오기 전부터 있던 식당도 저장한다 — 방에서 쓰인 식당이니까.
+ */
+function rememberDoran(room: RoomState) {
+  if (room.kind !== 'doran') return;
+  for (const r of room.restaurants) {
+    const sig = restSig(r);
+    if (doranSigs.get(r.id) === sig) continue;
+    doranSigs.set(r.id, sig);
+    doranPending.set(r.id, r);
+  }
+  if (doranPending.size && doranTimer === undefined) doranTimer = setTimeout(flushDoran, DORAN_SAVE_MS);
 }
 
 const unreadOf = (room: RoomState, me: string) => {
@@ -294,6 +335,7 @@ export const useShare = create<ShareStore>((set, get) => {
     if (inRoom()) markSeen(room);
     set({ room, myId, unread: inRoom() ? 0 : unreadOf(room, myId) });
     roomEffects(room, myId, get().role);
+    rememberDoran(room);
     alertChat(room, myId);
     autoPickMine();
   };
@@ -306,7 +348,8 @@ export const useShare = create<ShareStore>((set, get) => {
   const autoPickMine = () => {
     const { room, myId: me, role } = get();
     const f = room?.final;
-    if (!room || !f || !me || role === 'none') return;
+    // 도란식사는 선택지에 메뉴가 들어 있어 각자 고르지 않는다.
+    if (!room || room.kind !== 'lunch' || !f || !me || role === 'none') return;
     const key = `${f.restId}:${f.at}`;
     if (seenFinal.has(key) || (role === 'client' && !conn)) return;
     seenFinal.add(key);
@@ -344,6 +387,9 @@ export const useShare = create<ShareStore>((set, get) => {
     set((s) => ({ error, errField: field, errKey: s.errKey + 1 }));
 
   const reset = (p: Partial<ShareStore> = {}) => {
+    // 모아 둔 도란식사 식당은 바로 보관함에 넘기고, 다음 세션은 처음부터 센다.
+    flushDoran();
+    doranSigs.clear();
     clearTimeout(focusTimer);
     focusTimer = undefined;
     focusSent = null;
@@ -379,10 +425,11 @@ export const useShare = create<ShareStore>((set, get) => {
     focus: {},
     unread: 0,
     ended: null,
+    endedKind: null,
     called: null,
     autoPicked: null,
 
-    startHost: async () => {
+    startHost: async (kind = 'lunch') => {
       if (get().role !== 'none') return false;
       const port = parsePort(useSettings.getState().port);
       if (port === null) {
@@ -392,17 +439,20 @@ export const useShare = create<ShareStore>((set, get) => {
       const my = ++token;
       lastSeenChat = '';
       resetEffects();
-      set({ role: 'host', status: 'starting', step: 0, error: '', errField: null, ended: null });
+      set({ role: 'host', status: 'starting', step: 0, error: '', errField: null, ended: null, endedKind: null });
       const s0 = Date.now();
-      const room = createHostRoom({
-        onState: (s) => setRoom(s, s.hostId),
-        onFocus: (focus) => set({ focus }),
-        onGuestJoined: (m) => {
-          if (!inRoom()) toast(`${shortName(m.name)}님이 들어왔어요`);
+      const room = createHostRoom(
+        {
+          onState: (s) => setRoom(s, s.hostId),
+          onFocus: (focus) => set({ focus }),
+          onGuestJoined: (m) => {
+            if (!inRoom()) toast(`${shortName(m.name)}님이 들어왔어요`);
+          },
+          onError: (msg) => toast(msg),
+          onCalled: receiveCall,
         },
-        onError: (msg) => toast(msg),
-        onCalled: receiveCall,
-      });
+        kind,
+      );
       try {
         // 1. 포트 확인
         await atLeast(s0, HOST_STEP_MS[0]);
@@ -410,7 +460,8 @@ export const useShare = create<ShareStore>((set, get) => {
         set({ step: 1 });
         // 2. 로컬 서버 시작 — 여기서 실제로 포트를 연다
         const s1 = Date.now();
-        const info = await hostTransport.start(port, room.handle);
+        // 앱이 갑자기 꺼져도 참여자들이 바로 알 수 있게 작별 인사를 Rust 에 맡겨 둔다.
+        const info = await hostTransport.start(port, room.handle, room.will);
         hostRoom = room;
         await atLeast(s1, HOST_STEP_MS[1]);
         if (my !== token) throw new Error('');
@@ -419,7 +470,11 @@ export const useShare = create<ShareStore>((set, get) => {
         await delay(HOST_STEP_MS[2]);
         if (my !== token) throw new Error('');
         set({ status: 'hosting', step: 3 });
-        toast('서버를 켰어요 · 동료에게 주소를 알려 주세요');
+        toast(
+          kind === 'doran'
+            ? '도란식사 방을 열었어요 · 동료에게 주소를 알려 주세요'
+            : '서버를 켰어요 · 동료에게 주소를 알려 주세요',
+        );
         return true;
       } catch (e) {
         const msg = errText(e);
@@ -441,7 +496,9 @@ export const useShare = create<ShareStore>((set, get) => {
       const room = hostRoom;
       hostRoom = null;
       if (room) {
-        room.dispose('호스트가 같이 고르기를 끝냈어요.');
+        room.dispose(
+          room.getState().kind === 'doran' ? '호스트가 도란식사 방을 닫았어요.' : '호스트가 같이 고르기를 끝냈어요.',
+        );
         // 작별 인사가 나갈 틈을 준다.
         await delay(BYE_FLUSH_MS);
       }
@@ -470,6 +527,7 @@ export const useShare = create<ShareStore>((set, get) => {
         errField: null,
         target: addr,
         ended: null,
+        endedKind: null,
         room: null,
         focus: {},
       });
@@ -499,7 +557,7 @@ export const useShare = create<ShareStore>((set, get) => {
         onEnd: (reason) => {
           if (my !== token) return;
           conn = null;
-          reset({ ended: reason });
+          reset({ ended: reason, endedKind: get().room?.kind ?? null });
         },
       });
       try {
@@ -639,7 +697,7 @@ export const useShare = create<ShareStore>((set, get) => {
       useUi.getState().setView('together');
     },
 
-    dismissEnded: () => set({ ended: null }),
+    dismissEnded: () => set({ ended: null, endedKind: null }),
     dismissCalled: () => set({ called: null }),
 
     removeRecent: (addr) => {
@@ -678,12 +736,14 @@ useSettings.subscribe((s, prev) => {
 export async function bootShare() {
   const s = useSettings.getState();
   if (!s.autoStart) return;
-  const ok = await useShare.getState().startHost();
+  // 자동 시작은 늘 점심 방이다 (아침에 도란식사 방이 저절로 열리지 않게).
+  const ok = await useShare.getState().startHost('lunch');
   if (!ok) toast(`공유 서버를 자동으로 열지 못했어요: ${useShare.getState().error}`);
 }
 
 /** 창을 닫기 전에: 참여자들에게 작별 인사를 보내고 연결을 정리한다. */
 export async function shutdownShare() {
+  flushDoran();
   const st = useShare.getState();
   if (st.role === 'host') await st.stopHost();
   else if (st.role === 'client') {

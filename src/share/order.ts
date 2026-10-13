@@ -125,12 +125,16 @@ export function reservationText(room: RoomState) {
   const v = room.reservation;
   if (!v) return '';
   const r = room.restaurants.find((x) => x.id === v.restId);
+  const doran = room.kind === 'doran';
+  const choice = doran && room.final?.choiceId ? room.choices.find((c) => c.id === room.final!.choiceId) : undefined;
   return [
-    `[점심픽] ${r?.name ?? ''} 예약`,
+    `[점심픽] ${doran ? '도란식사 · ' : ''}${r?.name ?? ''} 예약`,
+    choice?.label ? `선택지 ${choice.label}` : '',
     r?.phone ? `전화 ${r.phone}` : '',
     `예약 ${fullName(room, v.by)} · ${hhmm(v.at)}`,
     ...v.items.map(lineText),
     v.items.length ? `합계 ${totalText(v.items)}` : '',
+    doran && room.budget ? `총사용금액 ${won(room.budget)}` : '',
     v.note ? `특이사항: ${v.note}` : '',
   ]
     .filter(Boolean)

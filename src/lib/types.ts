@@ -48,6 +48,9 @@ export type FabrixConf = {
 
 export type ShareMode = 'host' | 'join';
 
+/** 호스트로 열 방 — 점심 같이 고르기 / 도란식사 정하기 */
+export type HostKind = 'lunch' | 'doran';
+
 /** 한 번이라도 들어간 방 (설정의 방 찾기). at 은 마지막으로 들어간 시각 */
 export type RecentHost = { addr: string; name: string; at?: number };
 
@@ -64,6 +67,8 @@ export type Settings = {
   quiet: boolean;
   /** 설정 화면에서 마지막으로 고른 탭 */
   shareMode: ShareMode;
+  /** 호스트로 열 때 마지막으로 고른 방 종류 (자동 시작은 늘 점심) */
+  hostKind: HostKind;
   /** 참여할 호스트 주소(주소:포트)와 한 번이라도 들어간 방 (최근 순) */
   joinAddr: string;
   recentHosts: RecentHost[];
