@@ -104,7 +104,6 @@ function humanize(e: unknown): string {
 export default function SettingsScreen() {
   const restaurants = useData((s) => s.restaurants);
   const apply = useData((s) => s.apply);
-  const reset = useData((s) => s.reset);
   const clear = useData((s) => s.clear);
   const s = useSettings();
 
@@ -117,7 +116,7 @@ export default function SettingsScreen() {
   const [testOk, setTestOk] = useState(false);
   const [loadingModels, setLoadingModels] = useState(false);
   /** 두 번 눌러야 하는 버튼 중 한 번 누른 것 */
-  const [confirm, setConfirm] = useState<'seed' | 'clear' | null>(null);
+  const [confirm, setConfirm] = useState<'clear' | null>(null);
   const [pending, setPending] = useState<{
     restaurants: Restaurant[];
     summary: ImportSummary;
@@ -249,7 +248,7 @@ export default function SettingsScreen() {
   /** 한 번 누르면 3초 동안 확인을 기다리고, 그 안에 한 번 더 누르면 실행한다. */
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(confirmTimer.current), []);
-  const twice = (what: 'seed' | 'clear', run: () => void) => {
+  const twice = (what: 'clear', run: () => void) => {
     clearTimeout(confirmTimer.current);
     if (confirm !== what) {
       setConfirm(what);
@@ -259,12 +258,6 @@ export default function SettingsScreen() {
     setConfirm(null);
     run();
   };
-
-  const onReset = () =>
-    twice('seed', () => {
-      reset();
-      toast('초기화했어요');
-    });
 
   const onClear = () =>
     twice('clear', () => {
@@ -546,26 +539,14 @@ export default function SettingsScreen() {
             <button
               type="button"
               className="btn-soft"
-              onClick={onReset}
-              style={{ ...btnSoft, color: DANGER, fontWeight: 500 }}
-            >
-              샘플 데이터로 초기화
-            </button>
-            <button
-              type="button"
-              className="btn-soft"
               onClick={onClear}
               style={{ ...btnSoft, color: DANGER, fontWeight: 500 }}
             >
               식당 목록 모두 지우기
             </button>
-            {confirm === 'seed' ? (
+            {confirm === 'clear' ? (
               <span style={{ fontSize: 12.5, color: DANGER, fontWeight: 600 }}>
-                한 번 더 누르면 지금 목록이 샘플 데이터로 바뀝니다.
-              </span>
-            ) : confirm === 'clear' ? (
-              <span style={{ fontSize: 12.5, color: DANGER, fontWeight: 600 }}>
-                한 번 더 누르면 식당 {restaurants.length}곳과 먹은 기록이 모두 지워집니다 (샘플 데이터 포함).
+                한 번 더 누르면 식당 {restaurants.length}곳과 먹은 기록이 모두 지워집니다.
               </span>
             ) : null}
           </div>
